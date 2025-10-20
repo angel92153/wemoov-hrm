@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HRM Live (multi)</title>
+
+  <!-- Ejemplo opcional: carga de Google Fonts
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Poppins:wght@600;800&display=swap" rel="stylesheet">
+  -->
+
+  <style>
+    /* Ejemplo opcional: fuente local propia
+    @font-face{
+      font-family:"MiFuentePersonal";
+      src:url("MiFuentePersonal.woff2") format("woff2");
+      font-display:swap;
+    }
+    */
+
+    /* ========== FUENTES LOCALES ========== */
+    @font-face {
+      font-family: "StretchPro";
+      src: url("fonts/StretchPro.otf") format("opentype");
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: "Montserrat-Thin";
+      src: url("fonts/Montserrat-Thin.ttf") format("truetype");
+      font-display: swap;
+    }
+
+    /* ========== VARIABLES PRINCIPALES ========== */
+    :root {
+      /* ========= CONTROLES RÁPIDOS DE TAMAÑO ========= */
+      --fs-pct:    4em;   /* %HRmáx (centro) */
+      --fs-metric: 2em;   /* HR, kcal y moov */
+      --fs-nick:   4em;   /* Apodo/ID arriba-centro */
+      --icon-size: 28px;  /* Tamaño iconos (corazón/llama/logo) */
+
+      /* ========= FUENTES (independientes) ========= */
+      --font-nick:   "Montserrat-Thin", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
+      --font-pct:    "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
+      --font-metric: "Montserrat-Thin", system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
+
+      /* ========= COLORES BASE ========= */
+      --text:#e7eaf3;
+      --bg:#0b1020;
+      --z1:#3a3a3a;
+      --z2:#1e3a8a;
+      --z3:#166534;
+      --z4:#eab308;
+      --z5:#b91c1c;
+    }
+
+
+    *{box-sizing:border-box}
+    html,body{
+      margin:0; height:100%; width:100%; background:var(--bg); color:var(--text);
+      font-family: var(--font-metric); /* fuente global por defecto */
+      overflow:hidden;
+    }
+    body{display:flex; align-items:center; justify-content:center; padding:10px;}
+    .wrap{width:100%; height:100%; max-width:1800px; display:flex; align-items:center; justify-content:center;}
+    .grid{
+      display:grid; width:100%; height:100%; gap:14px;
+      align-content:center; align-items:stretch; justify-content:center;
+      transition: all .3s ease;
+    }
+    .card{
+      position:relative; border-radius:16px; padding:16px;
+      box-shadow: 0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
+      display:flex; align-items:center; justify-content:center;
+      transition: all .3s ease;
+    }
+    .card:active{ transform: scale(.995); }
+
+    /* Fondos por zona */
+    .z1{ background:var(--z1); }
+    .z2{ background:linear-gradient(135deg,#1e3a8a,#1f4bb5); }
+    .z3{ background:linear-gradient(135deg,#166534,#1c7a41); }
+    .z4{ background:linear-gradient(135deg,#eab308,#facc15); color:#111; }
+    .z5{ background:linear-gradient(135deg,#b91c1c,#ef4444); }
+
+    /* Apodo/ID (arriba-centro) */
+    .nick{
+      position:absolute; top:10px; left:50%; transform:translateX(-50%);
+      font-family: var(--font-nick);
+      font-weight:800; letter-spacing:.02em; font-size:var(--fs-nick);
+      text-shadow: 0 1px 2px rgba(0,0,0,.25); white-space:nowrap;
+    }
+
+    /* %HRmáx (centro) */
+    .pct{
+      font-family: var(--font-pct);
+      font-size:var(--fs-pct); font-weight:900; line-height:1;
+      text-shadow: 0 4px 10px rgba(0,0,0,.35); text-align:center;
+    }
+
+    /* ===== Formato unificado para HR / KCAL / MOOV ===== */
+    .metric{
+      display:flex; align-items:center; gap:8px;
+      font-family: var(--font-metric);
+      font-size:var(--fs-metric); font-weight:800;
+      text-shadow: 0 1px 2px rgba(0,0,0,.25);
+    }
+    .metric .icon{ display:inline-flex; width:var(--icon-size); height:var(--icon-size); }
+    .metric .icon svg{ width:100%; height:100%; fill:currentColor; }
+
+    /* Ubicaciones */
+    .hr   { position:absolute; bottom:10px; left:12px; }
+    .kcal { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); }
+    .moov { position:absolute; bottom:10px; right:12px; }
+
+    /* Animación “latido” solo HR */
+    @keyframes thump { 0%{transform:scale(1)} 30%{transform:scale(1.15)} 60%{transform:scale(1)} 100%{transform:scale(1)} }
+    .bump { animation: thump .18s ease-in-out; }
+
+    .empty{ color:#9aa3b2; text-align:center; padding:24px; border:1px dashed #2c3350; border-radius:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap"><div class="grid" id="grid"></div></div>
+
+  <script>
+    const grid = document.getElementById('grid');
+    const zoneClass = z => ({Z1:'z1',Z2:'z2',Z3:'z3',Z4:'z4',Z5:'z5'})[z] || 'z1';
+    const pctFrom  = (hr, hrmax) => (typeof hr==='number' && typeof hrmax==='number' && hrmax>0) ? Math.round((hr*100)/hrmax) : null;
+
+    // Layout responsivo por recuento
+    function layoutForCount(n){
+      let cols=4, rows=1;
+      if (n<=4){ cols=Math.max(1,n); rows=1; }
+      else if (n<=8){ cols=4; rows=2; }
+      else if (n<=12){ cols=4; rows=3; }
+      else { cols=4; rows=4; }
+      const vh = window.innerHeight - 30;
+      const heightPerCard = (vh - (rows - 1) * 14) / rows;
+      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
+      grid.style.justifyContent = (n<=4) ? 'center' : 'stretch';
+      document.querySelectorAll('.card').forEach(c=> c.style.height = `${heightPerCard}px`);
+    }
+
+    // Estado para detectar nueva muestra y “latir” solo HR
+    const lastTs = new Map();
+
+    function render(devs){
+      grid.innerHTML = '';
+      const list = devs || [];
+      layoutForCount(list.length);
+
+      if (!list.length){
+        const d=document.createElement('div'); d.className='empty'; d.textContent='Sin dispositivos activos…'; grid.append(d); return;
+      }
+
+      list.forEach(d=>{
+        const user = d.user || {};
+        const apodo = user.apodo || `ID ${d.dev}`;
+        const hr = (typeof d.hr==='number') ? d.hr : null;
+        const m = d.metrics || {};
+        const hrmax = m.hr_max ?? null;
+        const zone = m.zone || 'Z1';
+        const pct = pctFrom(hr, hrmax);
+        const kcal = (typeof m.kcal==='number') ? Math.round(m.kcal) : null;
+        const moov = (typeof m.moov_points==='number') ? Math.round(m.moov_points) : null;
+
+        const card  = document.createElement('div');
+        card.className = `card ${zoneClass(zone)}`;
+
+        const nick  = Object.assign(document.createElement('div'), {className:'nick', textContent: apodo});
+        const pctEl = Object.assign(document.createElement('div'), {className:'pct',  textContent: (pct==null?'--%':`${pct}%`)});
+
+        // HR + corazón (abajo-izq)
+        const hrWrap = Object.assign(document.createElement('div'), {className:'metric hr'});
+        const hrEl   = Object.assign(document.createElement('span'), {id:`hr-${d.dev}`, textContent:(hr==null?'--':`${hr}`)});
+        const heart  = document.createElement('span'); heart.className='icon';
+        heart.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 21s-5.052-3.247-8.106-6.3C1.84 12.646 1 10.97 1 9.2 1 6.88 2.88 5 5.2 5c1.36 0 2.656.56 3.6 1.56L12 9.04l3.2-2.48C16.144 5.56 17.44 5 18.8 5 21.12 5 23 6.88 23 9.2c0 1.77-.84 3.446-2.894 5.5C17.052 17.753 12 21 12 21z"/></svg>`;
+        hrWrap.append(hrEl, heart);
+
+        // KCAL + llama (abajo-centro)
+        const kWrap  = Object.assign(document.createElement('div'), {className:'metric kcal'});
+        const kcalEl = Object.assign(document.createElement('span'), {textContent:(kcal==null?'--':`${kcal}`)});
+        const flame  = document.createElement('span'); flame.className='icon';
+        flame.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 2C9.243 5.026 8 7.91 8 10.5A4.5 4.5 0 0 0 12.5 15c2.4 0 4.5-2 4.5-4.5 0-2.59-1.243-5.474-4-8.5zM12 22c5.523 0 10-4.477 10-10 0-4.004-2.383-7.738-6-9.334.666 1.944 1 3.994 1 6.334a6 6 0 1 1-12 0c0-2.34.334-4.39 1-6.334C4.383 4.262 2 7.996 2 12c0 5.523 4.477 10 10 10z"/></svg>`;
+        kWrap.append(kcalEl, flame);
+
+        // MOOV POINTS + logo (abajo-dcha)
+        const mWrap  = Object.assign(document.createElement('div'), {className:'metric moov'});
+        const moovEl = Object.assign(document.createElement('span'), {textContent:(moov==null?'--':`${moov}`)});
+        const mlogo  = document.createElement('span'); mlogo.className='icon';
+        mlogo.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M7 16V8h2.6l2.4 4 2.4-4H17v8h-2V11.7l-2 3.3h-2L9 11.7V16H7z" fill="var(--bg)"></path>
+          </svg>`;
+        mWrap.append(moovEl, mlogo);
+
+        card.append(nick, pctEl, hrWrap, kWrap, mWrap);
+        grid.append(card);
+      });
+    }
+
+    function bumpHR(devId){
+      const el = document.getElementById(`hr-${devId}`);
+      if (!el) return;
+      el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
+    }
+
+    async function tick(){
+      try{
+        const res = await fetch('/live?limit=16', {cache:'no-store'});
+        const list = await res.json();
+
+        // tras recibir datos, activamos latido solo si cambió ts
+        render(list);
+        (list || []).forEach(d=>{
+          const ts = d.ts || '';
+          const prev = lastTs.get(d.dev);
+          if (ts && ts !== prev){
+            bumpHR(d.dev);
+            lastTs.set(d.dev, ts);
+          }
+        });
+      }catch(e){
+        render([]);
+        lastTs.clear();
+      }finally{
+        setTimeout(tick, 500);
+      }
+    }
+
+    window.addEventListener('resize', ()=>{
+      const cards = document.querySelectorAll('.card');
+      if (cards.length){
+        const n = cards.length;
+        let cols=4, rows=1;
+        if (n<=4){ cols=Math.max(1,n); rows=1; }
+        else if (n<=8){ cols=4; rows=2; }
+        else if (n<=12){ cols=4; rows=3; }
+        else { cols=4; rows=4; }
+        const vh = window.innerHeight - 30;
+        const heightPerCard = (vh - (rows - 1) * 14) / rows;
+        document.querySelectorAll('.card').forEach(c=> c.style.height = `${heightPerCard}px`);
+      }
+    });
+
+    tick();
+  </script>
+</body>
+</html>
