@@ -1,0 +1,13 @@
+# Entornos virtuales
+.venv/
+venv/
+__pycache__/
+
+# Archivos temporales
+*.pyc
+*.pyo
+*.log
+
+# Configuración local
+.DS_Store
+.env
