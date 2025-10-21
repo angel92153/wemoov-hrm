@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{{ 'Editar usuario' if user else 'Añadir usuario' }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; padding: 20px; color: #0b1020; }
+    h1 { margin-top: 0; }
+    form { max-width: 720px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    label { font-weight: 600; font-size: 0.95rem; }
+    input, select { padding: 10px; border: 1px solid #cfd6e4; border-radius: 8px; font-size: 1rem; }
+    .full { grid-column: 1 / -1; }
+    .actions { grid-column: 1 / -1; display: flex; gap: 10px; margin-top: 6px; }
+    .muted { color: #6b7280; font-size: .9rem; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    button { padding: 10px 14px; border: none; border-radius: 8px; background: #1f4bb5; color: #fff; cursor: pointer; }
+    button.secondary { background: #e5e7eb; color: #111827; }
+  </style>
+</head>
+<body>
+
+  <h1>{{ 'Editar usuario' if user else 'Añadir usuario' }}</h1>
+
+  <form method="post" action="">
+    <div>
+      <label>Nombre</label>
+      <input name="nombre" value="{{ user.nombre if user else '' }}" required>
+    </div>
+    <div>
+      <label>Apellido</label>
+      <input name="apellido" value="{{ user.apellido if user else '' }}" required>
+    </div>
+
+    <div>
+      <label>Apodo</label>
+      <input name="apodo" value="{{ user.apodo if user else '' }}" placeholder="Se muestra en las tarjetas">
+    </div>
+    <div>
+      <label>Sexo</label>
+      <select name="sexo">
+        {% set s = (user.sexo if user else 'M') or 'M' %}
+        <option value="M" {{ 'selected' if s=='M' else '' }}>M</option>
+        <option value="F" {{ 'selected' if s=='F' else '' }}>F</option>
+      </select>
+    </div>
+
+    <div>
+      <label>Edad</label>
+      <input type="number" name="edad" min="1" max="120" value="{{ user.edad if user and user.edad else '' }}">
+    </div>
+    <div>
+      <label>Peso (kg)</label>
+      <input type="number" step="0.1" name="peso" min="1" max="500" value="{{ user.peso if user and user.peso else '' }}">
+    </div>
+
+    <!-- Dispositivo: input manual + dropdown de libres -->
+    <div class="full">
+      <label>Device ID</label>
+      <div class="row">
+        <input id="device_id" name="device_id" type="number" placeholder="Ej: 36466"
+               value="{{ user.device_id if user and user.device_id else '' }}">
+        <button type="button" id="btnReload" class="secondary">Recargar libres</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <select id="selFree">
+          <option value="">— Pulsómetros libres detectados —</option>
+        </select>
+      </div>
+      <div class="muted">Puedes escribir un ID manualmente o elegir uno de los detectados sin usuario (últimos 45s).</div>
+    </div>
+
+    <div>
+      <label>FC Reposo (opcional)</label>
+      <input type="number" name="hr_rest" min="30" max="120" value="{{ user.hr_rest if user and user.hr_rest else '' }}">
+    </div>
+    <div>
+      <label>FC Máx (opcional)</label>
+      <input type="number" name="hr_max" min="120" max="230" value="{{ user.hr_max if user and user.hr_max else '' }}">
+    </div>
+
+    <div class="actions">
+      <button type="submit">{{ 'Guardar cambios' if user else 'Crear usuario' }}</button>
+      <a href="{{ url_for('users_list') }}"><button class="secondary" type="button">Volver</button></a>
+    </div>
+  </form>
+
+  <script>
+    const selFree = document.getElementById('selFree');
+    const inputDev = document.getElementById('device_id');
+    const btnReload = document.getElementById('btnReload');
+
+    async function loadFree(recent=45) {
+      try {
+        btnReload.disabled = true;
+        btnReload.textContent = 'Cargando…';
+        const res = await fetch(`/api/unassigned_devices?recent=${recent}`, { cache: 'no-store' });
+        const data = await res.json();
+        const list = (data && data.devices) ? data.devices : [];
+        selFree.innerHTML = '<option value="">— Pulsómetros libres detectados —</option>';
+        if (!list.length) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = 'No hay pulsómetros libres ahora mismo';
+          selFree.appendChild(opt);
+        } else {
+          list.forEach(d => {
+            const opt = document.createElement('option');
+            const label = d.ts ? `${d.dev} · HR ${d.hr ?? '--'} · ${d.ts}` : `${d.dev} · HR ${d.hr ?? '--'}`;
+            opt.value = d.dev;
+            opt.textContent = label;
+            selFree.appendChild(opt);
+          });
+        }
+      } catch (e) {
+        selFree.innerHTML = '<option value="">(Error cargando lista)</option>';
+      } finally {
+        btnReload.textContent = 'Recargar libres';
+        btnReload.disabled = false;
+      }
+    }
+
+    selFree.addEventListener('change', () => {
+      const v = selFree.value;
+      if (v) inputDev.value = v;
+    });
+
+    btnReload.addEventListener('click', () => loadFree(45));
+
+    // carga inicial
+    loadFree(45);
+  </script>
+</body>
+</html>
