@@ -1,3 +1,4 @@
+# =========================== hr_server.py ===========================
 import threading
 import time
 import logging
@@ -8,7 +9,7 @@ import hr_real
 import db
 import metrics
 
-# Gestor de clases/sesiones (nuevo)
+# Gestor de clases/sesiones
 import session_manager as sm
 
 # --------- Simulador opcional ----------
@@ -40,19 +41,7 @@ if _HAS_COMPRESS:
 
 app.config["JSONIFY_PRETTYPRINT_REGULAR"] = False
 
-# ===== Filtro Jinja: Tanaka HRmax si falta en DB =====
-def tanaka_hrmax(edad):
-    try:
-        e = int(edad)
-        if e > 0:
-            return int(round(208 - 0.7 * e))
-    except Exception:
-        pass
-    return None
-
-app.jinja_env.filters['tanaka'] = tanaka_hrmax
-# =====================================================
-
+# ===== Filtros Jinja / utilidades edad & Tanaka =====
 from datetime import date, datetime
 
 def age_from_dob(dob_str):
@@ -80,11 +69,9 @@ def tanaka_from_dob(dob_str):
     a = age_from_dob(dob_str)
     return tanaka_from_age(a)
 
-# Filtros Jinja
 app.jinja_env.filters['age_from_dob'] = age_from_dob
 app.jinja_env.filters['tanaka_dob']   = tanaka_from_dob
-app.jinja_env.filters['tanaka']       = tanaka_from_age  # compat con la versión anterior
-
+app.jinja_env.filters['tanaka']       = tanaka_from_age
 
 # ======================= CONFIG SERVIDOR =======================
 SIM_DEVICES   = int(os.getenv("HRM_SIM_DEVICES", "3"))
@@ -152,9 +139,8 @@ def _parse_ts(ts_iso: str | None):
         return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).astimezone(timezone.utc)
     except Exception:
         return None
-    
+
 # ======================= DEMO SLOTS (solo en memoria) =======================
-# Pares (label, device_id) — puedes cambiar los IDs si quieres
 DEMO_SLOTS = [
     ("DEMO 1", 36466), ("DEMO 2", 91002), ("DEMO 3", 91003), ("DEMO 4", 91004), ("DEMO 5", 91005),
     ("DEMO 6", 91006), ("DEMO 7", 91007), ("DEMO 8", 91008), ("DEMO 9", 91009), ("DEMO 10", 91010),
@@ -383,15 +369,48 @@ def delete_user(user_id):
     return redirect(url_for("users_list"))
 
 # ==================== SESSION API (catálogo + control) ====================
-@app.route("/session/classes")
+
+# ---- Catálogo (listar) ----
+@app.route("/session/classes", methods=["GET"])
 def session_classes():
     """Catálogo de clases para UI (lista de modelos)."""
     return jsonify({"classes": sm.list_class_models()})
 
+# ---- Catálogo (crear/editar) ----
+@app.route("/session/classes", methods=["POST"])
+def session_classes_upsert():
+    data = request.get_json(silent=True) or {}
+    class_id = (data.get("id") or "").strip()
+    label    = (data.get("label") or "").strip()
+    phases   = data.get("phases") or []
+
+    if not class_id:
+        return jsonify({"ok": False, "error": "id requerido"}), 400
+    if not label:
+        return jsonify({"ok": False, "error": "label requerido"}), 400
+    if not isinstance(phases, list):
+        return jsonify({"ok": False, "error": "phases debe ser lista"}), 400
+    try:
+        sm.upsert_class(class_id, label, phases)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+# ---- Catálogo (eliminar) ----
+@app.route("/session/classes/<class_id>", methods=["DELETE"])
+def session_classes_delete(class_id):
+    try:
+        sm.delete_class(class_id)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+# ---- Estado sesión ----
 @app.route("/session/status")
 def session_status():
     return jsonify(sm.SESSION.status())
 
+# ---- Controles sesión ----
 @app.route("/session/start", methods=["POST"])
 def session_start():
     data = request.get_json(silent=True) or {}
@@ -407,6 +426,22 @@ def session_stop():
     sm.SESSION.stop()
     return jsonify({"ok": True})
 
+@app.route("/session/next", methods=["POST"])
+def session_next():
+    sm.SESSION.next_phase()
+    return jsonify({"ok": True})
+
+@app.route("/session/prev", methods=["POST"])
+def session_prev():
+    sm.SESSION.prev_phase()
+    return jsonify({"ok": True})
+
+@app.route("/session/toggle_pause", methods=["POST"])
+def session_toggle_pause():
+    sm.SESSION.toggle_pause()
+    return jsonify({"ok": True})
+
+# ---- programación puntual legacy por epoch (opcional) ----
 @app.route("/session/schedule", methods=["POST"])
 def session_schedule():
     data = request.get_json(silent=True) or {}
@@ -425,11 +460,93 @@ def session_unschedule():
     sm.SESSION.unschedule()
     return jsonify({"ok": True})
 
-# ==================== VISTA /sessions ====================
+# ==================== SETTINGS: clase por defecto ====================
+@app.route('/session/default_class', methods=["GET"])
+def api_get_defclass():
+    return jsonify({"default_class_id": sm.get_default_class_id()})
+
+@app.route('/session/default_class', methods=["POST"])
+def api_set_defclass():
+    data = request.get_json(silent=True) or {}
+    cid = data.get('class_id', 'moov')
+    sm.set_default_class_id(cid)
+    return jsonify({'ok': True, 'default_class_id': cid})
+
+# ==================== CALENDARIO (solo horarios, con guardado masivo) ====================
+@app.route("/session/calendar", methods=["GET"])
+def api_list_schedule():
+    return jsonify({"items": sm.SESSION.list_schedule()})
+
+@app.route("/session/calendar", methods=["POST"])
+def api_add_schedule():
+    data = request.get_json(silent=True) or {}
+    try:
+        dow = int(data["dow"])
+        time_str = str(data["time_str"])
+        sched_id = sm.SESSION.add_schedule(dow, time_str)
+        return jsonify({"ok": True, "sched_id": sched_id})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+@app.route("/session/calendar/<int:sched_id>", methods=["PUT"])
+def api_update_schedule(sched_id: int):
+    data = request.get_json(silent=True) or {}
+    try:
+        dow = data.get("dow")
+        if dow is not None:
+            dow = int(dow)
+        time_str = data.get("time_str")
+        sm.SESSION.update_schedule(sched_id, time_str=time_str, dow=dow)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+@app.route("/session/calendar/<int:sched_id>", methods=["DELETE"])
+def api_delete_schedule(sched_id: int):
+    sm.SESSION.delete_schedule(sched_id)
+    return jsonify({"ok": True})
+
+# ---- Reemplazo masivo (Guardar cambios) ----
+@app.route("/session/calendar_bulk", methods=["PUT"])
+def api_calendar_bulk():
+    data = request.get_json(silent=True) or {}
+    items = data.get("items", [])
+    try:
+        sm.SESSION.replace_schedule(items)
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+# ==================== ONE-OFF por día (sin hora) ====================
+@app.route('/session/oneoff', methods=["GET"])
+def api_oneoff_list():
+    return jsonify({"items": sm.SESSION.list_oneoff()})
+
+@app.route('/session/oneoff', methods=["POST"])
+def api_oneoff_add():
+    data = request.get_json(silent=True) or {}
+    ymd = data.get('ymd')
+    cid = data.get('class_id', 'moov')
+    if not ymd:
+        return jsonify({"ok": False, "error": "ymd requerido"}), 400
+    sm.SESSION.add_oneoff(ymd, cid)
+    return jsonify({'ok': True})
+
+@app.route('/session/oneoff/<ymd>', methods=["DELETE"])
+def api_oneoff_delete(ymd):
+    sm.SESSION.delete_oneoff(ymd)
+    return jsonify({'ok': True})
+
+# ==================== VISTAS ====================
 @app.route("/sessions")
 def sessions_ui():
-    """Página para lanzar/programar clases desde la web."""
+    """Página para editar clases y programar calendario."""
     return render_template("sessions.html")
+
+@app.route("/sessionscontrol")
+def sessions_control_ui():
+    """Página de control de sesión (cronómetro y controles)."""
+    return render_template("sessionscontrol.html")
 
 # ==================== ADMIN: REFRESH CACHÉS ====================
 @app.route("/admin/refresh", methods=["POST"])
@@ -467,6 +584,7 @@ def admin_refresh():
 # ==================== MAIN ====================
 def main():
     db.init_db()
+    sm.init_db_with_defaults()
 
     # Lanzar ANT real
     t_real = threading.Thread(target=hr_real.run_ant_listener, args=(STATE,), daemon=True)
@@ -496,3 +614,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# ========================= fin hr_server.py =========================

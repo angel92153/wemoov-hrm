@@ -1,233 +1,308 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <title>Sesiones | WeMoov</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset="utf-8">
+  <title>Clases & Calendario</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/brand.css">
   <style>
-    :root {
-      --bg: #0b1020;
-      --text: #e7eaf3;
-      --muted: #9aa3b2;
-      --card: #121936;
-      --border: #2c3350;
-      --accent: #1f4bb5;
+    .wrap-narrow{ max-width: 900px; margin: 0 auto; }
+    .panel{ background:var(--card); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow-lg); }
+    .pad{ padding:16px; }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .stack{ display:grid; gap:16px; }
+    .calendar{ display:grid; grid-template-columns:1fr; gap:10px; }
+    @media (min-width: 920px){ .calendar{ grid-template-columns: repeat(7, 1fr); } }
+    .day h4{ margin:0 0 8px; font-family:var(--ff-head); }
+    .badge{ display:inline-flex; gap:6px; padding:2px 8px; border-radius:999px; background:#1c1433; border:1px solid #2a1e4d; color:var(--accent); font-weight:800; font-size:12px }
+    table{ width:100%; border-collapse:collapse; }
+    th,td{ padding:8px; border-bottom:1px solid var(--border); text-align:center; }
+    thead th{ background:linear-gradient(180deg, #171717, #121212); font-family:var(--ff-head); }
+    .muted{ color:var(--muted); }
+    .btn-icon{
+      appearance:none; border:none; background:transparent; color:var(--muted); cursor:pointer;
+      font-size:16px; padding:4px; border-radius:8px; line-height:1;
     }
-    html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-    header { padding: 16px; border-bottom: 1px solid rgba(255,255,255,.08); display:flex; align-items:center; gap:12px; }
-    header a { color: var(--muted); text-decoration: none; }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
-
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
-    h2 { margin: 0 0 10px; }
-    h3 { margin: 0 0 10px; color: var(--muted); font-weight: 600; }
-
-    select, input, button {
-      padding:10px; border-radius:10px; border:1px solid var(--border); background:#0f1630; color:var(--text);
-    }
-    button { cursor:pointer; border-color:#3b4a7a; }
-    .inline { display:flex; align-items:center; gap:10px; flex-wrap: wrap; }
-
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { text-align: left; padding: 8px; border-bottom: 1px solid rgba(255,255,255,.06); }
-    .badge { font-size: .75rem; color: var(--muted); }
-
-    .status { display:flex; align-items:center; gap:10px; }
-    .dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
-    .phase { padding:8px 10px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:10px; }
-    .timer { font-variant-numeric: tabular-nums; }
+    .btn-icon:hover{ color:#fff; background:#181818; }
+    .right{ margin-left:auto; }
+    .time-row{ position:relative; width:100%; display:flex; align-items:center; }
+    .time-input{ flex:1; padding-right:28px; min-width:0; }
+    .trash-in-input{ position:absolute; right:4px; top:50%; transform:translateY(-50%); font-size:14px; opacity:0.85; }
+    input[type="time"]::-webkit-calendar-picker-indicator{ display:none; }
+    input[type="time"]{ -moz-appearance: textfield; appearance: textfield; }
   </style>
 </head>
 <body>
+<div class="wrap-narrow">
+  <h1>Clases & Calendario</h1>
 
-<header>
-  <a href="/">← Volver</a>
-  <h1>Sesiones</h1>
-</header>
+  <div class="stack">
 
-<div class="wrap">
-  <div class="row">
-    <div class="card">
-      <h2>Modelos de clase</h2>
-      <div class="inline">
-        <label for="selModel">Modelo:</label>
-        <select id="selModel"></select>
-        <span id="modelTotal" class="badge"></span>
+    <!-- Editor de clases -->
+    <section class="panel pad">
+      <h2 style="margin:0 0 8px">Editor de clases</h2>
+
+      <div class="row">
+        <label>Clases guardadas:</label>
+        <select id="editorSelector"></select>
+        <button class="btn" id="newClassBtn">Crear nueva clase</button>
       </div>
 
-      <h3>Fases</h3>
-      <table id="tblPhases">
-        <thead><tr><th>Fase</th><th>Duración</th><th>Color</th></tr></thead>
-        <tbody></tbody>
+      <div class="row" style="margin-top:8px">
+        <input id="editLabel" placeholder="Nombre de la clase (p.ej. Moov Class)" style="flex:1">
+        <input id="editId" type="hidden">
+        <button class="btn" id="saveClass">Guardar</button>
+        <button class="btn btn-danger" id="deleteClass">Eliminar</button>
+      </div>
+
+      <table style="margin-top:8px">
+        <thead><tr><th>#</th><th>Fase</th><th>Duración (s)</th><th>Color</th><th></th></tr></thead>
+        <tbody id="phBody"></tbody>
       </table>
-    </div>
+      <div style="margin-top:8px"><button class="btn" id="addPhase">+ Añadir fase</button></div>
+    </section>
 
-    <div class="card">
-      <h2>Control</h2>
+    <!-- Calendario + default + one-off -->
+    <section class="panel pad">
+      <h2 style="margin:0 0 8px">Calendario semanal</h2>
 
-      <div class="inline" style="margin-bottom:10px;">
-        <button id="btnStart">Iniciar ahora</button>
-        <button id="btnStop">Detener</button>
+      <div class="row">
+        <label>Clase por defecto:</label>
+        <select id="defaultClass"></select>
+        <button class="btn" id="saveDefault">Guardar por defecto</button>
+        <span id="defInfo" class="badge" style="margin-left:8px"></span>
+        <button class="btn btn-accent right" id="saveCalendar">Guardar cambios</button>
       </div>
 
-      <h3>Programar inicio</h3>
-      <div class="inline" style="margin-bottom:10px;">
-        <label>Fecha/hora (local):</label>
-        <input type="datetime-local" id="schedAt">
-        <label>Aviso (min):</label>
-        <input type="number" id="leadMin" min="0" value="5" style="width:80px">
-        <button id="btnSchedule">Programar</button>
-        <button id="btnUnschedule">Cancelar program.</button>
-      </div>
+      <div class="calendar" id="calendar" style="margin-top:10px"></div>
 
-      <h3>Estado</h3>
-      <div id="statusBox" class="status">
-        <span id="stateLabel" class="phase">Sin sesión</span>
-        <span id="stateTimer" class="timer">00:00</span>
-        <span id="stateDot" class="dot" style="background:#555"></span>
+      <h3 style="margin:14px 0 6px">Programación puntual por día</h3>
+      <div class="row">
+        <input type="date" id="ooDate">
+        <select id="ooClass"></select>
+        <button class="btn" id="ooAdd">Añadir / Reemplazar</button>
       </div>
-      <div class="badge" id="stateInfo"></div>
-    </div>
+      <div id="ooList" style="margin-top:8px"></div>
+    </section>
   </div>
 </div>
 
 <script>
-  const selModel = document.getElementById('selModel');
-  const tblBody = document.querySelector('#tblPhases tbody');
-  const modelTotal = document.getElementById('modelTotal');
+const $ = id => document.getElementById(id)
+const COLORS = [
+  {name:'Warm up', val:'#16a34a'},
+  {name:'Demo/Trans', val:'#6b21a8'},
+  {name:'Bloque', val:'#eab308'},
+  {name:'Cooldown', val:'#1d4ed8'}
+]
+const DAYS = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom']
+let classes = []
+let phasesBuffer = []
+let calItems = []
 
-  const btnStart = document.getElementById('btnStart');
-  const btnStop = document.getElementById('btnStop');
-  const btnSchedule = document.getElementById('btnSchedule');
-  const btnUnschedule = document.getElementById('btnUnschedule');
-  const schedAt = document.getElementById('schedAt');
-  const leadMin = document.getElementById('leadMin');
+// ============ CLASES ============
+async function fetchClasses(){
+  const res = await fetch('/session/classes'); const j = await res.json(); classes = j.classes||[]
+  const ed = $('editorSelector'); ed.innerHTML=''
+  classes.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.label; ed.appendChild(o) })
+  const def = $('defaultClass'); def.innerHTML = classes.map(c=>`<option value="${c.id}">${c.label}</option>`).join('')
+  const oo = $('ooClass'); oo.innerHTML = def.innerHTML
+  if(classes.length){ loadEditor(classes[0]) }
+}
 
-  const stateLabel = document.getElementById('stateLabel');
-  const stateTimer = document.getElementById('stateTimer');
-  const stateDot = document.getElementById('stateDot');
-  const stateInfo = document.getElementById('stateInfo');
+function loadEditor(c){
+  $('editorSelector').value = c.id
+  $('editId').value = c.id
+  $('editLabel').value = c.label
+  phasesBuffer = c.phases.map(p=>({key:p.key, dur_s:p.dur_s, color:p.color}))
+  renderPhases()
+  enforceMoovLock()
+}
 
-  function fmtMMSS(sec) {
-    sec = Math.max(0, Math.floor(sec));
-    const mm = String(Math.floor(sec/60)).padStart(2,'0');
-    const ss = String(sec%60).padStart(2,'0');
-    return `${mm}:${ss}`;
+function enforceMoovLock(){
+  const isMoov = ($('editId').value === 'moov' || $('editLabel').value.trim().toLowerCase() === 'moov class')
+  $('editLabel').readOnly = isMoov
+  $('deleteClass').style.display = isMoov ? 'none' : ''
+  $('addPhase').disabled = isMoov
+  document.querySelectorAll('#phBody input, #phBody select, #phBody button').forEach(el=>{
+    if (el.getAttribute('data-del') !== null){ el.style.display = isMoov ? 'none' : '' }
+    if (el.tagName === 'BUTTON') return
+    el.disabled = isMoov
+  })
+}
+
+$('editorSelector').onchange = (e)=>{
+  const c = classes.find(x=>x.id===e.target.value); if(c) loadEditor(c)
+}
+$('newClassBtn').onclick = ()=>{
+  $('editId').value = ''
+  $('editLabel').value = ''
+  phasesBuffer = []
+  renderPhases()
+  enforceMoovLock()
+}
+
+function renderPhases(){
+  const tb = $('phBody'); tb.innerHTML=''
+  phasesBuffer.forEach((p,i)=>{
+    const tr = document.createElement('tr')
+    tr.innerHTML = `
+      <td>${i+1}</td>
+      <td><input data-i="${i}" data-k="key" value="${p.key}"></td>
+      <td><input type="number" data-i="${i}" data-k="dur_s" value="${p.dur_s}"></td>
+      <td>
+        <select data-i="${i}" data-k="color">
+          ${COLORS.map(c=>`<option value="${c.val}" ${c.val===p.color?'selected':''}>${c.name}</option>`).join('')}
+        </select>
+      </td>
+      <td><button class="btn btn-ghost" data-del="${i}">🗑️</button></td>`
+    tb.appendChild(tr)
+  })
+}
+
+$('phBody').addEventListener('input', e=>{
+  const i = e.target.getAttribute('data-i'); const k = e.target.getAttribute('data-k')
+  if(i!==null && k){ let v=e.target.value; if(k==='dur_s') v=parseInt(v||'0',10); phasesBuffer[i][k]=v }
+})
+$('phBody').addEventListener('click', e=>{
+  const del=e.target.getAttribute('data-del'); if(del!=null){ phasesBuffer.splice(parseInt(del,10),1); renderPhases(); enforceMoovLock() }
+})
+$('addPhase').onclick = ()=>{ phasesBuffer.push({key:'NEW', dur_s:60, color:COLORS[2].val}); renderPhases(); enforceMoovLock() }
+$('saveClass').onclick = async ()=>{
+  // Sanea y genera id si está vacío
+  let id = $('editId').value.trim()
+  const label = ($('editLabel').value.trim() || 'Nueva clase')
+  if(id === 'moov' || label.toLowerCase() === 'moov class'){
+    alert('“Moov Class” no se puede editar.')
+    return
   }
+  if(!id){ id = label.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'') }
+  const body = { id, label, phases: phasesBuffer }
+  const resp = await fetch('/session/classes', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  })
+  const j = await resp.json()
+  if(!j.ok){ alert('Error al guardar: ' + (j.error||'')); return }
+  await fetchClasses()
+}
+$('deleteClass').onclick = async ()=>{
+  const id = $('editId').value.trim(); if(!id || id==='moov') return
+  if(!confirm('¿Eliminar clase '+id+'?')) return
+  const r = await fetch('/session/classes/'+encodeURIComponent(id), {method:'DELETE'})
+  const j = await r.json()
+  if(!j.ok){ alert('Error al eliminar: ' + (j.error||'')); return }
+  await fetchClasses()
+}
 
-  async function loadCatalog() {
-    const res = await fetch('/session/classes', { cache: 'no-store' });
-    const data = await res.json();
-    const classes = data.classes || [];
-    selModel.innerHTML = '';
-    for (const c of classes) {
-      const opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = `${c.label}`;
-      opt.dataset.total = c.total_s;
-      selModel.appendChild(opt);
-    }
-    if (classes.length) {
-      renderPhases(classes[0]);
-    }
+// ---- Default class ----
+async function loadDefault(){
+  const r = await fetch('/session/default_class'); const j = await r.json(); const id=j.default_class_id
+  $('defaultClass').value = id
+  const found = classes.find(c => c.id === id);
+  const name  = found ? found.label : id;
+  $('defInfo').textContent = 'Default: ' + name
+}
+$('saveDefault').onclick = async ()=>{
+  const id = $('defaultClass').value
+  const resp = await fetch('/session/default_class', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({class_id:id})})
+  await resp.json()
+  const found = classes.find(c => c.id === id);
+  $('defInfo').textContent = 'Default: ' + (found ? found.label : id)
+}
+
+// ============ CALENDARIO (edición local + guardar masivo) ============
+async function loadCalendar(){
+  const res = await fetch('/session/calendar'); const j = await res.json();
+  calItems = (j.items||[]).map(x=>({sched_id:x.sched_id, dow:x.dow, time_str:x.time_str}))
+  renderCalendar()
+}
+
+function renderCalendar(){
+  const wrap = $('calendar'); wrap.innerHTML=''
+  for(let d=0; d<7; d++){
+    const col = document.createElement('div'); col.className='day panel'
+    const inner = document.createElement('div'); inner.className='pad'
+    const h = document.createElement('h4'); h.textContent = DAYS[d]
+    inner.appendChild(h)
+
+    const idxs = calItems
+      .map((it,idx)=>({it,idx}))
+      .filter(x=>x.it.dow===d)
+      .sort((a,b)=>a.it.time_str.localeCompare(b.it.time_str))
+      .map(x=>x.idx)
+
+    idxs.forEach(ci=>{
+      const it = calItems[ci]
+      const row = document.createElement('div'); row.className='time-row'
+      row.innerHTML = `
+        <input class="time-input" type="time" value="${it.time_str}" data-ci="${ci}">
+        <button class="btn-icon trash-in-input" title="Eliminar" data-del-ci="${ci}">🗑️</button>`
+      inner.appendChild(row)
+    })
+
+    const add = document.createElement('div'); add.className='row';
+    add.innerHTML = `<input class="time-input" type='time' value='08:00' data-add-time data-dow='${d}'> <button class='btn' data-add='${d}'>Añadir</button>`
+    inner.appendChild(add)
+
+    col.appendChild(inner); wrap.appendChild(col)
   }
+}
 
-  async function getCatalogMap() {
-    const res = await fetch('/session/classes', { cache: 'no-store' });
-    const data = await res.json();
-    const map = {};
-    for (const c of (data.classes || [])) map[c.id] = c;
-    return map;
+$('calendar').addEventListener('input', (e)=>{
+  const ci = e.target.getAttribute('data-ci')
+  if(ci!=null){
+    calItems[parseInt(ci,10)].time_str = e.target.value
   }
-
-  function renderPhases(model) {
-    tblBody.innerHTML = '';
-    for (const p of model.phases || []) {
-      const tr = document.createElement('tr');
-      const td1 = document.createElement('td'); td1.textContent = p.key;
-      const td2 = document.createElement('td'); td2.textContent = fmtMMSS(p.dur_s);
-      const td3 = document.createElement('td'); td3.innerHTML = `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${p.color};border:1px solid rgba(255,255,255,.3)"></span>`;
-      tr.append(td1, td2, td3);
-      tblBody.appendChild(tr);
-    }
-    modelTotal.textContent = `Duración total: ${fmtMMSS(model.total_s)}`;
+})
+$('calendar').addEventListener('click', (e)=>{
+  const add = e.target.getAttribute('data-add')
+  const delCi = e.target.getAttribute('data-del-ci')
+  if (add!=null){
+    const box = e.target.parentElement
+    const time = box.querySelector('input[data-add-time]').value
+    calItems.push({dow:parseInt(add,10), time_str:time})
+    renderCalendar()
   }
-
-  selModel.addEventListener('change', async () => {
-    const id = selModel.value;
-    const map = await getCatalogMap();
-    if (map[id]) renderPhases(map[id]);
-  });
-
-  btnStart.addEventListener('click', async () => {
-    const cid = selModel.value || 'moov';
-    await fetch('/session/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({class_id: cid})});
-  });
-
-  btnStop.addEventListener('click', async () => {
-    await fetch('/session/stop', {method:'POST'});
-  });
-
-  btnSchedule.addEventListener('click', async () => {
-    const cid = selModel.value || 'moov';
-    const dt = schedAt.value;
-    if (!dt) return alert('Selecciona fecha/hora');
-    const epoch = Math.floor(new Date(dt).getTime()/1000);
-    const lead = Math.max(0, parseInt(leadMin.value || '0', 10) * 60);
-    const res = await fetch('/session/schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({class_id: cid, start_epoch: epoch, lead_s: lead})});
-    const r = await res.json();
-    if (!r.ok) alert(r.error || 'Error al programar');
-  });
-
-  btnUnschedule.addEventListener('click', async () => {
-    await fetch('/session/unschedule', {method:'POST'});
-  });
-
-  async function pollStatus() {
-    try {
-      const res = await fetch('/session/status', { cache: 'no-store' });
-      const s = await res.json();
-
-      if (!s.active && s.scheduled_ts) {
-        const cd = s.countdown_s || 0;
-        if (s.show_countdown) {
-          stateLabel.textContent = 'Comienza en';
-          stateTimer.textContent = fmtMMSS(cd);
-          stateDot.style.background = '#6b21a8';
-          stateInfo.textContent = `Programada (${new Date(s.scheduled_ts*1000).toLocaleTimeString()})`;
-        } else {
-          stateLabel.textContent = 'Sesión programada';
-          stateTimer.textContent = new Date(s.scheduled_ts*1000).toLocaleTimeString();
-          stateDot.style.background = '#6b7280';
-          stateInfo.textContent = '';
-        }
-        return;
-      }
-
-      if (s.active) {
-        stateLabel.textContent = s.phase_key || 'En curso';
-        stateTimer.textContent = fmtMMSS(s.phase_remaining_s || 0);
-        stateDot.style.background = s.phase_color || '#eab308';
-        const tot = s.total_s || 0, el = s.elapsed_s || 0;
-        stateInfo.textContent = `Progreso: ${fmtMMSS(el)} / ${fmtMMSS(tot)}`;
-        return;
-      }
-
-      // Inactiva
-      stateLabel.textContent = 'Sin sesión';
-      stateTimer.textContent = '00:00';
-      stateDot.style.background = '#555';
-      stateInfo.textContent = '';
-    } catch(e) {
-      // noop
-    }
+  if (delCi!=null){
+    calItems.splice(parseInt(delCi,10), 1)
+    renderCalendar()
   }
+})
 
-  loadCatalog();
-  setInterval(pollStatus, 1000);
-  pollStatus();
+$('saveCalendar').onclick = async ()=>{
+  const payload = { items: calItems.map(x=>({dow:x.dow, time_str:x.time_str})) }
+  const resp = await fetch('/session/calendar_bulk', {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  })
+  const j = await resp.json()
+  if(!j.ok){ alert('Error al guardar calendario: ' + (j.error||'')); return }
+  await loadCalendar()
+}
+
+// ============ ONE-OFF (día) ============
+async function loadOneOff(){
+  const r = await fetch('/session/oneoff'); const j = await r.json(); const items=j.items||[]
+  const box = $('ooList'); box.innerHTML=''
+  items.forEach(it=>{
+    const row = document.createElement('div'); row.className='row'
+    row.innerHTML = `<span class='badge'>${it.ymd}</span> <span>${it.class_id}</span> <button class='btn btn-ghost' data-oodel='${it.ymd}'>Eliminar</button>`
+    box.appendChild(row)
+  })
+}
+$('ooAdd').onclick = async ()=>{
+  const ymd = $('ooDate').value; const cid = $('ooClass').value
+  if(!ymd){ alert('Selecciona fecha'); return }
+  await fetch('/session/oneoff',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ymd:ymd, class_id:cid})})
+  loadOneOff()
+}
+$('ooList').addEventListener('click', async (e)=>{
+  const del = e.target.getAttribute('data-oodel'); if(del){ await fetch('/session/oneoff/'+del, {method:'DELETE'}); loadOneOff() }
+})
+
+// Init
+fetchClasses().then(()=>{ loadCalendar(); loadDefault(); loadOneOff() })
 </script>
-
 </body>
 </html>

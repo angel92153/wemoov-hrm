@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Control de sesión</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="stylesheet" href="/static/brand.css">
+  <style>
+    .wrap-narrow{ max-width: 760px; margin: 0 auto; }
+    .center{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-height:70vh; text-align:center; }
+    .timer{
+      font-family: var(--ff-head);
+      font-weight: 800;
+      font-size: clamp(32px, 9vw, 86px);
+      letter-spacing: .5px;
+    }
+    .timer.phase{ color: var(--text); }
+    .timer.countdown{ color: #ffffff; } /* blanco para pre-countdown */
+    .phase-label{ font-size: clamp(14px, 2.4vw, 18px); color: var(--muted); }
+    .controls{ display:flex; gap:18px; align-items:center; justify-content:center; }
+    .ctrl{
+      appearance:none; border:none; background:transparent; color:var(--text); cursor:pointer;
+      width:72px; height:72px; border-radius:50%;
+      display:flex; align-items:center; justify-content:center; font-size:34px;
+      box-shadow: var(--shadow-lg); background: #151515; border:1px solid var(--border);
+      transition: transform .06s ease, border-color .2s;
+    }
+    .ctrl:active{ transform: translateY(1px); }
+    .ctrl:hover{ border-color: var(--accent); }
+    .pill{ padding:6px 10px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:13px; }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
+
+    /* Colores de fase (borde brillante) */
+    .glow{ box-shadow: 0 0 0 2px rgba(255,255,255,0.06), 0 0 34px rgba(255,255,255,0.12) inset; border-radius: 18px; padding:16px 24px; }
+  </style>
+</head>
+<body>
+<div class="wrap-narrow">
+  <div class="center">
+    <div id="info" class="phase-label"></div>
+    <div id="timer" class="timer">--:--</div>
+    <div id="controls" class="controls" style="display:none;">
+      <button class="ctrl" id="prev" title="Atrás">⏮</button>
+      <button class="ctrl" id="toggle" title="Pausa / Play">⏯</button>
+      <button class="ctrl" id="next" title="Adelante">⏭</button>
+    </div>
+    <div id="hint" class="row"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id)
+
+function fmt(s){
+  s = Math.max(0, s|0)
+  const m = Math.floor(s/60), ss = s%60
+  return String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0')
+}
+
+async function poll(){
+  try{
+    const r = await fetch('/session/status')
+    const j = await r.json()
+    const t = $('timer'), info = $('info'), controls = $('controls'), hint = $('hint')
+
+    // Pre-countdown (inactiva + show_countdown)
+    if(!j.active && j.show_countdown){
+      t.className = 'timer countdown'
+      t.textContent = fmt(j.countdown_s ?? 0)
+      info.textContent = 'Comienza en'
+      controls.style.display = 'none'
+      hint.innerHTML = j.next_class_id ? `<span class="pill">Clase: ${j.next_class_id}</span>` : ''
+      return
+    }
+
+    // Sesión activa
+    if(j.active){
+      const phaseColor = j.phase_color || '#ffffff'
+      t.className = 'timer phase'
+      t.style.color = phaseColor
+      t.textContent = fmt(j.phase_remaining_s ?? 0)
+      info.textContent = (j.phase_key || 'Fase') + (j.paused ? ' · PAUSA' : '')
+      controls.style.display = ''
+      hint.innerHTML = ''
+      return
+    }
+
+    // Estado inactivo sin countdown
+    t.className = 'timer'
+    t.style.color = ''
+    t.textContent = '--:--'
+    info.textContent = 'Sin sesión'
+    controls.style.display = 'none'
+    hint.innerHTML = ''
+  }catch(e){
+    // silencioso
+  }
+}
+
+$('prev').onclick   = ()=> fetch('/session/prev', {method:'POST'})
+$('next').onclick   = ()=> fetch('/session/next', {method:'POST'})
+$('toggle').onclick = ()=> fetch('/session/toggle_pause', {method:'POST'})
+
+setInterval(poll, 1000)
+poll()
+</script>
+</body>
+</html>
