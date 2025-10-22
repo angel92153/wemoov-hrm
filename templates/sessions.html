@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Sesiones | WeMoov</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --text: #e7eaf3;
+      --muted: #9aa3b2;
+      --card: #121936;
+      --border: #2c3350;
+      --accent: #1f4bb5;
+    }
+    html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    header { padding: 16px; border-bottom: 1px solid rgba(255,255,255,.08); display:flex; align-items:center; gap:12px; }
+    header a { color: var(--muted); text-decoration: none; }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+    h2 { margin: 0 0 10px; }
+    h3 { margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+
+    select, input, button {
+      padding:10px; border-radius:10px; border:1px solid var(--border); background:#0f1630; color:var(--text);
+    }
+    button { cursor:pointer; border-color:#3b4a7a; }
+    .inline { display:flex; align-items:center; gap:10px; flex-wrap: wrap; }
+
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid rgba(255,255,255,.06); }
+    .badge { font-size: .75rem; color: var(--muted); }
+
+    .status { display:flex; align-items:center; gap:10px; }
+    .dot { width:12px; height:12px; border-radius:50%; display:inline-block; }
+    .phase { padding:8px 10px; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.1); border-radius:10px; }
+    .timer { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+
+<header>
+  <a href="/">← Volver</a>
+  <h1>Sesiones</h1>
+</header>
+
+<div class="wrap">
+  <div class="row">
+    <div class="card">
+      <h2>Modelos de clase</h2>
+      <div class="inline">
+        <label for="selModel">Modelo:</label>
+        <select id="selModel"></select>
+        <span id="modelTotal" class="badge"></span>
+      </div>
+
+      <h3>Fases</h3>
+      <table id="tblPhases">
+        <thead><tr><th>Fase</th><th>Duración</th><th>Color</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Control</h2>
+
+      <div class="inline" style="margin-bottom:10px;">
+        <button id="btnStart">Iniciar ahora</button>
+        <button id="btnStop">Detener</button>
+      </div>
+
+      <h3>Programar inicio</h3>
+      <div class="inline" style="margin-bottom:10px;">
+        <label>Fecha/hora (local):</label>
+        <input type="datetime-local" id="schedAt">
+        <label>Aviso (min):</label>
+        <input type="number" id="leadMin" min="0" value="5" style="width:80px">
+        <button id="btnSchedule">Programar</button>
+        <button id="btnUnschedule">Cancelar program.</button>
+      </div>
+
+      <h3>Estado</h3>
+      <div id="statusBox" class="status">
+        <span id="stateLabel" class="phase">Sin sesión</span>
+        <span id="stateTimer" class="timer">00:00</span>
+        <span id="stateDot" class="dot" style="background:#555"></span>
+      </div>
+      <div class="badge" id="stateInfo"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const selModel = document.getElementById('selModel');
+  const tblBody = document.querySelector('#tblPhases tbody');
+  const modelTotal = document.getElementById('modelTotal');
+
+  const btnStart = document.getElementById('btnStart');
+  const btnStop = document.getElementById('btnStop');
+  const btnSchedule = document.getElementById('btnSchedule');
+  const btnUnschedule = document.getElementById('btnUnschedule');
+  const schedAt = document.getElementById('schedAt');
+  const leadMin = document.getElementById('leadMin');
+
+  const stateLabel = document.getElementById('stateLabel');
+  const stateTimer = document.getElementById('stateTimer');
+  const stateDot = document.getElementById('stateDot');
+  const stateInfo = document.getElementById('stateInfo');
+
+  function fmtMMSS(sec) {
+    sec = Math.max(0, Math.floor(sec));
+    const mm = String(Math.floor(sec/60)).padStart(2,'0');
+    const ss = String(sec%60).padStart(2,'0');
+    return `${mm}:${ss}`;
+  }
+
+  async function loadCatalog() {
+    const res = await fetch('/session/classes', { cache: 'no-store' });
+    const data = await res.json();
+    const classes = data.classes || [];
+    selModel.innerHTML = '';
+    for (const c of classes) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = `${c.label}`;
+      opt.dataset.total = c.total_s;
+      selModel.appendChild(opt);
+    }
+    if (classes.length) {
+      renderPhases(classes[0]);
+    }
+  }
+
+  async function getCatalogMap() {
+    const res = await fetch('/session/classes', { cache: 'no-store' });
+    const data = await res.json();
+    const map = {};
+    for (const c of (data.classes || [])) map[c.id] = c;
+    return map;
+  }
+
+  function renderPhases(model) {
+    tblBody.innerHTML = '';
+    for (const p of model.phases || []) {
+      const tr = document.createElement('tr');
+      const td1 = document.createElement('td'); td1.textContent = p.key;
+      const td2 = document.createElement('td'); td2.textContent = fmtMMSS(p.dur_s);
+      const td3 = document.createElement('td'); td3.innerHTML = `<span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${p.color};border:1px solid rgba(255,255,255,.3)"></span>`;
+      tr.append(td1, td2, td3);
+      tblBody.appendChild(tr);
+    }
+    modelTotal.textContent = `Duración total: ${fmtMMSS(model.total_s)}`;
+  }
+
+  selModel.addEventListener('change', async () => {
+    const id = selModel.value;
+    const map = await getCatalogMap();
+    if (map[id]) renderPhases(map[id]);
+  });
+
+  btnStart.addEventListener('click', async () => {
+    const cid = selModel.value || 'moov';
+    await fetch('/session/start', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({class_id: cid})});
+  });
+
+  btnStop.addEventListener('click', async () => {
+    await fetch('/session/stop', {method:'POST'});
+  });
+
+  btnSchedule.addEventListener('click', async () => {
+    const cid = selModel.value || 'moov';
+    const dt = schedAt.value;
+    if (!dt) return alert('Selecciona fecha/hora');
+    const epoch = Math.floor(new Date(dt).getTime()/1000);
+    const lead = Math.max(0, parseInt(leadMin.value || '0', 10) * 60);
+    const res = await fetch('/session/schedule', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({class_id: cid, start_epoch: epoch, lead_s: lead})});
+    const r = await res.json();
+    if (!r.ok) alert(r.error || 'Error al programar');
+  });
+
+  btnUnschedule.addEventListener('click', async () => {
+    await fetch('/session/unschedule', {method:'POST'});
+  });
+
+  async function pollStatus() {
+    try {
+      const res = await fetch('/session/status', { cache: 'no-store' });
+      const s = await res.json();
+
+      if (!s.active && s.scheduled_ts) {
+        const cd = s.countdown_s || 0;
+        if (s.show_countdown) {
+          stateLabel.textContent = 'Comienza en';
+          stateTimer.textContent = fmtMMSS(cd);
+          stateDot.style.background = '#6b21a8';
+          stateInfo.textContent = `Programada (${new Date(s.scheduled_ts*1000).toLocaleTimeString()})`;
+        } else {
+          stateLabel.textContent = 'Sesión programada';
+          stateTimer.textContent = new Date(s.scheduled_ts*1000).toLocaleTimeString();
+          stateDot.style.background = '#6b7280';
+          stateInfo.textContent = '';
+        }
+        return;
+      }
+
+      if (s.active) {
+        stateLabel.textContent = s.phase_key || 'En curso';
+        stateTimer.textContent = fmtMMSS(s.phase_remaining_s || 0);
+        stateDot.style.background = s.phase_color || '#eab308';
+        const tot = s.total_s || 0, el = s.elapsed_s || 0;
+        stateInfo.textContent = `Progreso: ${fmtMMSS(el)} / ${fmtMMSS(tot)}`;
+        return;
+      }
+
+      // Inactiva
+      stateLabel.textContent = 'Sin sesión';
+      stateTimer.textContent = '00:00';
+      stateDot.style.background = '#555';
+      stateInfo.textContent = '';
+    } catch(e) {
+      // noop
+    }
+  }
+
+  loadCatalog();
+  setInterval(pollStatus, 1000);
+  pollStatus();
+</script>
+
+</body>
+</html>

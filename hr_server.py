@@ -2,12 +2,14 @@ import threading
 import time
 import logging
 import os
-from datetime import datetime, timezone
 from flask import Flask, jsonify, request, send_from_directory, render_template, redirect, url_for
 
 import ant_hr
 import db
 import metrics
+
+# Gestor de clases/sesiones (nuevo)
+import session_manager as sm
 
 # --------- Simulador opcional ----------
 try:
@@ -39,14 +41,12 @@ if _HAS_COMPRESS:
 app.config["JSONIFY_PRETTYPRINT_REGULAR"] = False
 
 # ======================= CONFIG SERVIDOR =======================
-SIM_DEVICES   = int(os.getenv("HRM_SIM_DEVICES", "0"))
+SIM_DEVICES   = int(os.getenv("HRM_SIM_DEVICES", "16"))
 SIM_BASE_ID   = int(os.getenv("HRM_SIM_BASE_ID", "10000"))
 SIM_UPDATE_HZ = float(os.getenv("HRM_SIM_UPDATE_HZ", "2"))
 SIM_AUTOCREATE = os.getenv("HRM_SIM_AUTOCREATE", "1") in ("1", "true", "yes", "on")
 
 MIN_REFRESH_S = float(os.getenv("HRM_MIN_REFRESH_S", "2.5"))
-
-# Dispositivos “recientes” (para el desplegable de pulsómetros libres)
 DEVICE_RECENT_SECS = float(os.getenv("HRM_DEVICE_RECENT_SECS", "45"))
 # ===============================================================
 
@@ -86,7 +86,7 @@ def _state_signature(limit: int) -> str:
     return ','.join(f'{dev}|{v.get("hr")}|{v.get("ts")}' for dev, v in items)
 
 def _parse_ts(ts_iso: str | None):
-    """Parse ISO8601 -> datetime UTC (local helper para /api/unassigned_devices)."""
+    from datetime import datetime, timezone
     if not ts_iso:
         return None
     try:
@@ -140,17 +140,10 @@ def live():
         if mrec and mrec.get("ts") == ts:
             m = mrec.get("metrics")
         else:
-            # Nota: metrics.update usa hr_max manual si existe; si no, Tanaka.
-            m = SESSION.update(dev, user, hr, ts)  # mode="mixed" por defecto en metrics
+            m = SESSION.update(dev, user, hr, ts)
             METRICS_CACHE[dev] = {"ts": ts, "metrics": m}
 
-        entries.append({
-            "dev": dev,
-            "hr": hr,
-            "ts": ts,
-            "user": user,
-            "metrics": m
-        })
+        entries.append({"dev": dev, "hr": hr, "ts": ts, "user": user, "metrics": m})
 
     entries.sort(key=lambda e: (0 if e["user"] else 1, e["dev"]))
     entries = entries[:limit]
@@ -162,11 +155,8 @@ def live():
 @app.route("/api/unassigned_devices")
 def api_unassigned_devices():
     """
-    Lista los pulsómetros detectados en STATE en los últimos N segundos
-    (por defecto 45s) que NO están asociados a ningún usuario (DB).
-      GET /api/unassigned_devices?recent=45
-    Respuesta:
-      { "devices": [ { "dev": 36466, "hr": 128, "ts": "..." }, ... ] }
+    Lista los pulsómetros detectados en los últimos N segundos que NO están asociados a usuario.
+    GET /api/unassigned_devices?recent=45
     """
     try:
         recent = float(request.args.get("recent", str(DEVICE_RECENT_SECS)))
@@ -181,8 +171,7 @@ def api_unassigned_devices():
         if ts:
             age_s = now - ts.timestamp()
             if age_s > recent:
-                continue  # muy viejo
-        # si no hay ts parseable, igualmente lo exponemos (por si acaso)
+                continue
         if db.get_user_by_device(dev) is None:
             out.append({"dev": int(dev), "hr": val.get("hr"), "ts": ts_iso})
     out.sort(key=lambda d: d["dev"])
@@ -207,7 +196,7 @@ def add_user():
             device_id=int(form.get("device_id") or 0),
             sexo=form.get("sexo", "M"),
             hr_rest=int(form.get("hr_rest") or 0) or None,
-            hr_max=int(form.get("hr_max") or 0) or None,  # FC máx manual opcional
+            hr_max=int(form.get("hr_max") or 0) or None,
             is_sim=0
         )
         return redirect(url_for("users_list"))
@@ -230,7 +219,7 @@ def edit_user(user_id):
             device_id=int(form.get("device_id") or 0),
             sexo=form.get("sexo", "M"),
             hr_rest=int(form.get("hr_rest") or 0) or None,
-            hr_max=int(form.get("hr_max") or 0) or None   # FC máx manual opcional
+            hr_max=int(form.get("hr_max") or 0) or None
         )
         return redirect(url_for("users_list"))
     return render_template("user_form.html", user=user)
@@ -244,6 +233,55 @@ def delete_user(user_id):
             conn.commit()
     return redirect(url_for("users_list"))
 
+# ==================== SESSION API (catálogo + control) ====================
+@app.route("/session/classes")
+def session_classes():
+    """Catálogo de clases para UI (lista de modelos)."""
+    return jsonify({"classes": sm.list_class_models()})
+
+@app.route("/session/status")
+def session_status():
+    return jsonify(sm.SESSION.status())
+
+@app.route("/session/start", methods=["POST"])
+def session_start():
+    data = request.get_json(silent=True) or {}
+    cid = data.get("class_id", "moov")
+    try:
+        sm.SESSION.start(cid)
+        return jsonify({"ok": True, "class_id": cid})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+@app.route("/session/stop", methods=["POST"])
+def session_stop():
+    sm.SESSION.stop()
+    return jsonify({"ok": True})
+
+@app.route("/session/schedule", methods=["POST"])
+def session_schedule():
+    data = request.get_json(silent=True) or {}
+    try:
+        sm.SESSION.schedule(
+            class_id=data.get("class_id", "moov"),
+            start_epoch=float(data.get("start_epoch")),
+            lead_s=int(data.get("lead_s", 0))
+        )
+        return jsonify({"ok": True})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 400
+
+@app.route("/session/unschedule", methods=["POST"])
+def session_unschedule():
+    sm.SESSION.unschedule()
+    return jsonify({"ok": True})
+
+# ==================== VISTA /sessions ====================
+@app.route("/sessions")
+def sessions_ui():
+    """Página para lanzar/programar clases desde la web."""
+    return render_template("sessions.html")
+
 # ==================== ADMIN: REFRESH CACHÉS ====================
 @app.route("/admin/refresh", methods=["POST"])
 def admin_refresh():
@@ -256,7 +294,7 @@ def admin_refresh():
     try:
         data = request.get_json(silent=True) or {}
         dev = data.get("device_id")
-        reset_sessions = bool(data.get("reset_sessions", False))  # por defecto NO resetea
+        reset_sessions = bool(data.get("reset_sessions", False))
 
         _LIVE_CACHE["payload"] = None
         _LIVE_CACHE["key"] = None
@@ -285,7 +323,7 @@ def main():
     t_real = threading.Thread(target=ant_hr.run_ant_listener, args=(STATE,), daemon=True)
     t_real.start()
 
-    # Lanzar simulador SIEMPRE (aunque SIM_DEVICES=0, así limpia is_sim)
+    # Lanzar simulador SIEMPRE (aunque SIM_DEVICES=0, para limpieza de simulados en DB si aplica)
     if _HAS_SIM:
         hr_sim.start_simulator(
             STATE,

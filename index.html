@@ -10,16 +10,90 @@
     @font-face { font-family:"Montserrat-Thin"; src:url("fonts/Montserrat-Thin.ttf") format("truetype"); font-display:swap; }
 
     :root{
-      --text:#e7eaf3; --bg:#0b1020; --z1:#3a3a3a; --z2:#1e3a8a; --z3:#166534; --z4:#eab308; --z5:#b91c1c;
+      --text:#ffffff; --bg:#000000; --z1:#3a3a3a; --z2:#1e3a8a; --z3:#166534; --z4:#eab308; --z5:#b91c1c;
       --font-nick:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
       --font-pct:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
       --font-metric:"Montserrat-Thin",system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
+
       --fs-pct:8em; --fs-metric:4em; --fs-nick:8em; --icon-size:56px;
+
+      --topbar-h: 76px;
+      --phase-color: #eab308;
     }
 
     *{box-sizing:border-box}
-    html,body{margin:0;height:100%;width:100%;background:var(--bg);color:var(--text);font-family:var(--font-metric);overflow:hidden}
-    body{display:flex;align-items:center;justify-content:center;padding:10px}
+    html,body{
+      margin:0;height:100%;width:100%;
+      background:var(--bg);color:var(--text);
+      font-family:var(--font-metric);
+      overflow:hidden;
+    }
+
+    /* ====== CABECERA ====== */
+    header.topbar{
+      position:fixed; inset:0 0 auto 0; height:var(--topbar-h);
+      display:grid; grid-template-columns: 1fr auto 1fr; align-items:center;
+      padding: 0 16px; z-index:20;
+      background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    /* Contenedor izquierdo: timer (izq) + phase (der) */
+    .topbar .left{
+      justify-self:start;
+      display:flex; align-items:center;
+      gap: 0.25ch;          /* MÁS JUNTO que antes */
+      white-space: nowrap;  /* evita saltos de línea */
+      min-width: 0;         /* permite que la fase recorte si es larguísima */
+    }
+    .topbar .center{ justify-self:center; height:100%; display:flex; align-items:center; }
+    .topbar .right{ justify-self:end; display:flex; align-items:center; }
+
+    .phase, .timer, .clock {
+      font-family: "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
+      font-weight: 900; line-height: 1; letter-spacing: .03em; white-space: nowrap;
+      text-shadow: 0 1px 2px rgba(0,0,0,.25);
+      font-variant-numeric: tabular-nums;
+      font-size: calc(var(--topbar-h) * 0.48);
+    }
+    .phase, .timer { color: var(--phase-color); }
+    .clock { color: #ffffff; }
+
+    /* Crono con ancho reservado, alineado a la izquierda, y sin "saltos" */
+    .timer{
+      /* Quitamos el letter-spacing para que entren exactamente 5 caracteres ("00:00")
+        y así poder usar 5ch clavados sin dejar hueco extra. */
+      letter-spacing: 0;
+
+      width: 4.5ch;          /* reserva exacta para "00:00" */
+      flex: 0 0 4.5ch;       /* ancho fijo en el flex */
+      text-align: left;    /* número pegado al borde izquierdo */
+      margin: 0;
+    }
+    .invisible{ opacity: 0; }  /* mantiene espacio, no se ve */
+
+    /* Si la fase fuese muy larga, que recorte con elipsis antes de saltar */
+    .phase{
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 50vw;
+      margin: 0;
+    }
+
+    /* Logo */
+    .logo-img {
+      display:block;
+      height: calc(var(--topbar-h) * 0.5);
+      max-width: 34vw;
+      object-fit: contain;
+      image-rendering: auto;
+      filter: drop-shadow(0 1px 2px rgba(0,0,0,.25));
+    }
+
+    /* ====== LAYOUT GRID ====== */
+    body{
+      display:flex;align-items:center;justify-content:center;padding:10px;
+      padding-top:calc(var(--topbar-h) + 10px);
+    }
     .wrap{width:100%;height:100%;max-width:1800px;display:flex;align-items:center;justify-content:center}
     .grid{display:grid;width:100%;height:100%;gap:14px;align-content:center;align-items:stretch;justify-content:center;transition:all .3s ease}
 
@@ -28,6 +102,7 @@
       box-shadow:0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
       display:flex;align-items:center;justify-content:center;transition:all .3s ease;
       container-type:size;
+      color:#fff;  /* texto SIEMPRE blanco */
       --base-nick:56px; --base-pct:64px; --base-metric:30px; --base-icon:30px;
       --fs-nick:max(var(--base-nick),10cqmin);
       --fs-pct:max(var(--base-pct),18cqmin);
@@ -38,10 +113,16 @@
     .z1{background:var(--z1)}
     .z2{background:linear-gradient(135deg,#1e3a8a,#1f4bb5)}
     .z3{background:linear-gradient(135deg,#166534,#1c7a41)}
-    .z4{background:linear-gradient(135deg,#eab308,#facc15);color:#111}
+    .z4{background:linear-gradient(135deg,#eab308,#facc15)} /* sin forzar color negro */
     .z5{background:linear-gradient(135deg,#b91c1c,#ef4444)}
 
-    .nick{position:absolute;top:10px;left:50%;transform:translateX(-50%);font-family:var(--font-nick);font-weight:800;letter-spacing:.02em;font-size:var(--fs-nick);text-shadow:0 1px 2px rgba(0,0,0,.25);white-space:nowrap}
+    /* 🔙 Apodo como antes */
+    .nick{
+      position:absolute; top:10px;
+      left:50%; transform:translateX(-50%);
+      font-family:var(--font-nick); font-weight:800; letter-spacing:.02em;
+      font-size:var(--fs-nick); text-shadow:0 1px 2px rgba(0,0,0,.25); white-space:nowrap;
+    }
     .pct{font-family:var(--font-pct);font-size:var(--fs-pct);font-weight:900;line-height:1;text-shadow:0 4px 10px rgba(0,0,0,.35);text-align:center}
     .metric{display:flex;align-items:center;gap:8px;font-family:var(--font-metric);font-size:var(--fs-metric);font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.25)}
     .metric .icon{display:inline-flex;width:var(--icon-size);height:var(--icon-size)}
@@ -58,34 +139,98 @@
   </style>
 </head>
 <body>
+
+  <!-- ====== CABECERA: crono (izq fijo) + fase (der), logo centro, reloj dcha ====== -->
+  <header class="topbar">
+    <div class="left">
+      <div id="phaseTimer" class="timer invisible">00:00</div>
+      <div id="phaseText" class="phase"></div>
+    </div>
+    <div class="center">
+      <!-- Coloca el PNG en ./static/logo_wemoov.png -->
+      <img src="/static/logo_wemoov.png" alt="WeMoov" class="logo-img" />
+    </div>
+    <div class="right">
+      <div id="clock" class="clock">--:--:--</div>
+    </div>
+  </header>
+
   <div class="wrap"><div class="grid" id="grid"></div></div>
 
   <script>
-    // ====== CONFIG DE POLL ======
-    const POLL_MS = 3000;          // ritmo normal
-    const IDLE_POLL_MS = 5000;     // si no hay dispositivos
-    const FETCH_TIMEOUT_MS = 8000;  // corta si el server no responde
-    const MAX_ERROR_BACKOFF_MS = 6000;
+    /* ====== CONFIG DE POLL ====== */
+    const POLL_MS = 3000, IDLE_POLL_MS = 5000, FETCH_TIMEOUT_MS = 8000, MAX_ERROR_BACKOFF_MS = 6000;
 
-    // ====== ESTADO ======
+    /* ====== ESTADO ====== */
     const grid = document.getElementById('grid');
-    const lastTs = new Map();   // dev_id -> ts
-    let lastSignature = '';     // firma rápida del último payload renderizado
-    let errorBackoff = POLL_MS; // se duplica en errores hasta MAX_ERROR_BACKOFF_MS
-    let abortCtrl = null;       // para cancelar fetch colgados
-    let nextTimer = null;
+    const lastTs = new Map();
+    let lastSignature = '', errorBackoff = POLL_MS, abortCtrl = null, nextTimer = null;
 
     const zoneClass = z => ({ Z1:'z1', Z2:'z2', Z3:'z3', Z4:'z4', Z5:'z5' })[z] || 'z1';
-    const pctFrom = (hr, hrmax) => (typeof hr==='number' && typeof hrmax==='number' && hrmax>0)
-      ? Math.round((hr * 100) / hrmax) : null;
+    const pctFrom = (hr, hrmax) => (typeof hr==='number' && typeof hrmax==='number' && hrmax>0) ? Math.round((hr*100)/hrmax) : null;
 
+    /* ====== CABECERA ====== */
+    const clockEl = document.getElementById('clock');
+    const phaseEl = document.getElementById('phaseText');
+    const timerEl = document.getElementById('phaseTimer');
+
+    function updateClock(){
+      const n=new Date(), hh=String(n.getHours()).padStart(2,'0'), mm=String(n.getMinutes()).padStart(2,'0'), ss=String(n.getSeconds()).padStart(2,'0');
+      clockEl.textContent=`${hh}:${mm}:${ss}`;
+    }
+    setInterval(updateClock,1000); updateClock();
+
+    function fmtMMSS(sec){ sec=Math.max(0,Math.floor(sec)); return `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`; }
+    function setPhaseColor(hex){ document.documentElement.style.setProperty('--phase-color', hex||'#eab308'); }
+
+    async function pollSession(){
+      try{
+        const res = await fetch('/session/status', { cache:'no-store' });
+        const s = await res.json();
+
+        if (!s.active && s.scheduled_ts){
+          const cd = s.countdown_s || 0;
+          if (s.show_countdown){
+            setPhaseColor('#6b21a8');
+            phaseEl.textContent = 'Comienza en';
+            timerEl.textContent = fmtMMSS(cd);
+            timerEl.classList.remove('invisible');   // visible
+          }else{
+            setPhaseColor('#e7eaf3');
+            phaseEl.textContent = 'Sesión programada';
+            timerEl.textContent = new Date(s.scheduled_ts*1000).toLocaleTimeString();
+            timerEl.classList.remove('invisible');   // visible (hora)
+          }
+          return;
+        }
+
+        if (s.active){
+          setPhaseColor(s.phase_color||'#eab308');
+          phaseEl.textContent = s.phase_key || 'Sesión';
+          timerEl.textContent = fmtMMSS(s.phase_remaining_s ?? 0);
+          timerEl.classList.remove('invisible');     // visible durante sesión
+          return;
+        }
+
+        // Sin sesión ni programación → fase vacía y crono “oculto” pero con ancho reservado
+        setPhaseColor('#e7eaf3');
+        phaseEl.textContent = '';
+        timerEl.textContent = '00:00';
+        timerEl.classList.add('invisible');          // no se ve, pero evita que la fase se mueva
+      }catch(e){
+        // silencio en errores de red
+      }
+    }
+    setInterval(pollSession,1000); pollSession();
+
+    /* ====== GRID HR ====== */
     function layoutForCount(n){
-      let cols = 4, rows = 1;
-      if (n <= 4){ cols = Math.max(1, n); rows = 1; }
-      else if (n <= 8){ cols = 4; rows = 2; }
-      else if (n <= 12){ cols = 4; rows = 3; }
-      else { cols = 4; rows = 4; }
-      const vh = window.innerHeight - 30;
+      let cols=4, rows=1;
+      if (n<=4){ cols=Math.max(1,n); rows=1; }
+      else if (n<=8){ cols=4; rows=2; }
+      else if (n<=12){ cols=4; rows=3; }
+      else { cols=4; rows=4; }
+      const vh = window.innerHeight - 30 - parseInt(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h'));
       const heightPerCard = (vh - (rows - 1) * 14) / rows;
       grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
       grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
@@ -99,46 +244,48 @@
       layoutForCount(list.length);
 
       if (!list.length){
-        const d = document.createElement('div');
-        d.className = 'empty';
-        d.textContent = 'Sin dispositivos activos…';
+        const d=document.createElement('div');
+        d.className='empty';
+        d.textContent='Sin dispositivos activos…';
         grid.append(d);
         return;
       }
 
       list.forEach(d => {
-        const user = d.user || {};
-        const apodo = user.apodo || `ID ${d.dev}`;
-        const hr = (typeof d.hr === 'number') ? d.hr : null;
-        const m = d.metrics || {};
-        const hrmax = m.hr_max ?? null;
-        const zone = m.zone || 'Z1';
-        const pct = pctFrom(hr, hrmax);
-        const kcal = (typeof m.kcal === 'number') ? Math.round(m.kcal) : null;
-        const moov = (typeof m.moov_points === 'number') ? Math.round(m.moov_points) : null;
+        const user=d.user||{};
+        const apodo=user.apodo||`ID ${d.dev}`;
+        const hr=(typeof d.hr==='number')?d.hr:null;
+        const m=d.metrics||{};
+        const hrmax=m.hr_max??null;
+        const zone=m.zone||'Z1';
+        const pct=pctFrom(hr,hrmax);
+        const kcal=(typeof m.kcal==='number')?Math.round(m.kcal):null;
+        let moov=null;
+        if (typeof m.moov==='number') moov=Math.round(m.moov);
+        else if (typeof m.moov_points==='number') moov=Math.round(m.moov_points);
 
-        const card = document.createElement('div');
-        card.className = `card ${zoneClass(zone)}`;
+        const card=document.createElement('div');
+        card.className=`card ${zoneClass(zone)}`;
 
-        const nick  = Object.assign(document.createElement('div'), { className: 'nick', textContent: apodo });
-        const pctEl = Object.assign(document.createElement('div'), { className: 'pct', textContent: (pct == null ? '--%' : `${pct}%`) });
+        const nick = Object.assign(document.createElement('div'), { className:'nick', textContent:apodo });
+        const pctEl= Object.assign(document.createElement('div'), { className:'pct',  textContent:(pct==null?'--%':`${pct}%`) });
 
-        const hrWrap = Object.assign(document.createElement('div'), { className: 'metric hr' });
-        const hrEl   = Object.assign(document.createElement('span'), { id: `hr-${d.dev}`, textContent: (hr == null ? '--' : `${hr}`) });
-        const heart  = document.createElement('span'); heart.className = 'icon';
-        heart.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 21s-5.052-3.247-8.106-6.3C1.84 12.646 1 10.97 1 9.2 1 6.88 2.88 5 5.2 5c1.36 0 2.656.56 3.6 1.56L12 9.04l3.2-2.48C16.144 5.56 17.44 5 18.8 5 21.12 5 23 6.88 23 9.2c0 1.77-.84 3.446-2.894 5.5C17.052 17.753 12 21 12 21z"/></svg>`;
+        const hrWrap=Object.assign(document.createElement('div'), { className:'metric hr' });
+        const hrEl  =Object.assign(document.createElement('span'), { id:`hr-${d.dev}`, textContent:(hr==null?'--':`${hr}`) });
+        const heart =document.createElement('span'); heart.className='icon';
+        heart.innerHTML=`<svg viewBox="0 0 24 24"><path d="M12 21s-5.052-3.247-8.106-6.3C1.84 12.646 1 10.97 1 9.2 1 6.88 2.88 5 5.2 5c1.36 0 2.656.56 3.6 1.56L12 9.04l3.2-2.48C16.144 5.56 17.44 5 18.8 5 21.12 5 23 6.88 23 9.2c0 1.77-.84 3.446-2.894 5.5C17.052 17.753 12 21 12 21z"/></svg>`;
         hrWrap.append(hrEl, heart);
 
-        const kWrap  = Object.assign(document.createElement('div'), { className: 'metric kcal' });
-        const kcalEl = Object.assign(document.createElement('span'), { textContent: (kcal == null ? '--' : `${kcal}`) });
-        const flame  = document.createElement('span'); flame.className = 'icon';
-        flame.innerHTML = `<svg viewBox="0 0 24 24"><path d="M12 2C9.243 5.026 8 7.91 8 10.5A4.5 4.5 0 0 0 12.5 15c2.4 0 4.5-2 4.5-4.5 0-2.59-1.243-5.474-4-8.5zM12 22c5.523 0 10-4.477 10-10 0-4.004-2.383-7.738-6-9.334.666 1.944 1 3.994 1 6.334a6 6 0 1 1-12 0c0-2.34.334-4.39 1-6.334C4.383 4.262 2 7.996 2 12c0 5.523 4.477 10 10 10z"/></svg>`;
+        const kWrap =Object.assign(document.createElement('div'), { className:'metric kcal' });
+        const kcalEl=Object.assign(document.createElement('span'), { textContent:(kcal==null?'--':`${kcal}`) });
+        const flame =document.createElement('span'); flame.className='icon';
+        flame.innerHTML=`<svg viewBox="0 0 24 24"><path d="M12 2C9.243 5.026 8 7.91 8 10.5A4.5 4.5 0 0 0 12.5 15c2.4 0 4.5-2 4.5-4.5 0-2.59-1.243-5.474-4-8.5zM12 22c5.523 0 10-4.477 10-10 0-4.004-2.383-7.738-6-9.334.666 1.944 1 3.994 1 6.334a6 6 0 1 1-12 0c0-2.34.334-4.39 1-6.334C4.383 4.262 2 7.996 2 12c0 5.523 4.477 10 10 10z"/></svg>`;
         kWrap.append(kcalEl, flame);
 
-        const mWrap  = Object.assign(document.createElement('div'), { className: 'metric moov' });
-        const moovEl = Object.assign(document.createElement('span'), { textContent: (moov == null ? '--' : `${moov}`) });
-        const mlogo  = document.createElement('span'); mlogo.className = 'icon';
-        mlogo.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M7 16V8h2.6l2.4 4 2.4-4H17v8h-2V11.7l-2 3.3h-2L9 11.7V16H7z" fill="var(--bg)"></path></svg>`;
+        const mWrap =Object.assign(document.createElement('div'), { className:'metric moov' });
+        const moovEl=Object.assign(document.createElement('span'), { textContent:(moov==null?'--':`${moov}`) });
+        const mlogo =document.createElement('span'); mlogo.className='icon';
+        mlogo.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M7 16V8h2.6l2.4 4 2.4-4H17v8h-2V11.7l-2 3.3h-2L9 11.7V16H7z" fill="var(--bg)"></path></svg>`;
         mWrap.append(moovEl, mlogo);
 
         card.append(nick, pctEl, hrWrap, kWrap, mWrap);
@@ -147,15 +294,14 @@
     }
 
     function bumpHR(devId){
-      const el = document.getElementById(`hr-${devId}`);
+      const el=document.getElementById(`hr-${devId}`);
       if (!el) return;
       el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
     }
 
-    // Firma rápida del payload para evitar repintar si no hay cambios
     function signature(list){
-      if (!Array.isArray(list) || !list.length) return '[]';
-      return list.map(d => `${d.dev}|${d.hr}|${d.ts}`).join(',');
+      if (!Array.isArray(list)||!list.length) return '[]';
+      return list.map(d=>`${d.dev}|${d.hr}|${d.ts}`).join(',');
     }
 
     function scheduleNext(ms){
@@ -164,68 +310,47 @@
     }
 
     async function tick(){
-      // No hagas nada si la pestaña no está visible (ahorro CPU/batería)
-      if (document.hidden){
-        scheduleNext(IDLE_POLL_MS);
-        return;
-      }
-
-      // Cancela petición anterior si sigue viva
+      if (document.hidden){ scheduleNext(IDLE_POLL_MS); return; }
       if (abortCtrl) abortCtrl.abort();
       abortCtrl = new AbortController();
-      const signal = abortCtrl.signal;
-
-      // Timeout manual para abortar si tarda demasiado
-      const timeout = setTimeout(() => abortCtrl.abort(), FETCH_TIMEOUT_MS);
-
+      const timeout = setTimeout(()=>abortCtrl.abort(), FETCH_TIMEOUT_MS);
       try{
-        const res = await fetch('/live?limit=16', { cache:'no-store', signal });
+        const res = await fetch('/live?limit=16', { cache:'no-store', signal:abortCtrl.signal });
         const list = await res.json();
         clearTimeout(timeout);
 
-        const sig = signature(list);
-        if (sig !== lastSignature){
+        const sig=signature(list);
+        if (sig!==lastSignature){
           render(list);
-          (list || []).forEach(d => {
-            const ts = d.ts || '';
-            const prev = lastTs.get(d.dev);
-            if (ts && ts !== prev){
-              bumpHR(d.dev);
-              lastTs.set(d.dev, ts);
-            }
+          (list||[]).forEach(d=>{
+            const ts=d.ts||'', prev=lastTs.get(d.dev);
+            if (ts && ts!==prev){ bumpHR(d.dev); lastTs.set(d.dev, ts); }
           });
-          lastSignature = sig;
+          lastSignature=sig;
         }
-        // éxito → resetea backoff
-        errorBackoff = POLL_MS;
-        scheduleNext((list && list.length) ? POLL_MS : IDLE_POLL_MS);
-
-      } catch(e){
+        errorBackoff=POLL_MS;
+        scheduleNext((list&&list.length)?POLL_MS:IDLE_POLL_MS);
+      }catch(e){
         clearTimeout(timeout);
-        // en error, ralentiza con backoff (hasta máx)
-        errorBackoff = Math.min(MAX_ERROR_BACKOFF_MS, Math.max(POLL_MS, Math.floor(errorBackoff * 2)));
+        errorBackoff=Math.min(MAX_ERROR_BACKOFF_MS, Math.max(POLL_MS, Math.floor(errorBackoff*2)));
         scheduleNext(errorBackoff);
       }
     }
 
-    // Pausar/reanudar al cambiar visibilidad
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden){
-        if (nextTimer) clearTimeout(nextTimer);
-        tick();
-      }
+      if (!document.hidden){ if (nextTimer) clearTimeout(nextTimer); tick(); }
     });
 
     window.addEventListener('resize', () => {
-      const cards = document.querySelectorAll('.card');
+      const cards=document.querySelectorAll('.card');
       if (cards.length){
-        const n = cards.length;
-        let cols = 4, rows = 1;
-        if (n <= 4){ cols = Math.max(1, n); rows = 1; }
-        else if (n <= 8){ cols = 4; rows = 2; }
-        else if (n <= 12){ cols = 4; rows = 3; }
-        else { cols = 4; rows = 4; }
-        const vh = window.innerHeight - 30;
+        const n=cards.length;
+        let cols=4, rows=1;
+        if (n<=4){ cols=Math.max(1,n); rows=1; }
+        else if (n<=8){ cols=4; rows=2; }
+        else if (n<=12){ cols=4; rows=3; }
+        else { cols=4; rows=4; }
+        const vh = window.innerHeight - 30 - parseInt(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h'));
         const heightPerCard = (vh - (rows - 1) * 14) / rows;
         cards.forEach(c => c.style.height = `${heightPerCard}px`);
       }
