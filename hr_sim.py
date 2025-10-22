@@ -1,11 +1,13 @@
 """
-Simulador de HRM realista (Karvonen + autocreación opcional de usuarios simulados).
+Simulador de HRM realista (usa Karvonen internamente para generar FC,
+pero crea usuarios simulados SIN hr_rest persistida en DB).
 
-- Genera HR fisiológicamente verosímil por dispositivo siguiendo un patrón de entrenamiento.
-- Usa HRmax (Tanaka) y HRrest (realista según sexo/edad o guardada en DB).
+- Genera HR fisiológicamente verosímil por dispositivo siguiendo un patrón.
+- Usa HRmax (Tanaka) y una FCreposo interna (no guardada) para simular.
 - Limpia usuarios simulados anteriores (is_sim=1) al arrancar si hay DB.
 - Si auto_create_users=True:
-    * Crea nuevos usuarios ficticios (is_sim=1) con datos coherentes.
+    * Crea nuevos usuarios ficticios (is_sim=1) SIN hr_rest en DB.
+    * (Opcional) Guarda hr_max estimada; si no la quieres, elimínala.
 """
 
 import time
@@ -32,7 +34,7 @@ def _tanaka_hrmax(age: Optional[int]) -> float:
     return 208.0 - 0.7 * float(age or 35)
 
 def _estimate_hrrest(sexo: Optional[str], edad: Optional[int]) -> int:
-    """Estimación de FC reposo realista según sexo y edad."""
+    """Estimación de FC reposo realista según sexo y edad (sólo uso interno del sim)."""
     s = (sexo or "").strip().upper()
     if edad is None:
         edad = 35
@@ -65,7 +67,10 @@ _FEMALE_NAMES = [
 ]
 
 def _ensure_user_for_dev(dev: int) -> Optional[dict]:
-    """Asegura usuario simulado en DB con hr_rest realista (marcado is_sim=1)."""
+    """
+    Asegura usuario simulado en DB (is_sim=1) **SIN hr_rest** persistida.
+    - (Opcional) persiste hr_max estimada por Tanaka para coherencia.
+    """
     if not _HAS_DB:
         return None
 
@@ -77,13 +82,16 @@ def _ensure_user_for_dev(dev: int) -> Optional[dict]:
     sexo = "M" if rnd.random() < 0.5 else "F"
     edad = rnd.randint(22, 55)
     peso = rnd.uniform(55, 85) if sexo == "M" else rnd.uniform(45, 70)
-    hr_rest = _estimate_hrrest(sexo, edad)
+
+    # Estimaciones internas (NO guardar hr_rest)
+    hr_max_est  = int(round(_tanaka_hrmax(edad)))
 
     nombre = (rnd.choice(_MALE_NAMES) if sexo == "M" else rnd.choice(_FEMALE_NAMES))
     apodo = nombre
     apellido = "Sim"
 
     try:
+        # 🔸 Importante: NO pasar hr_rest -> quedará NULL/None en DB
         db.create_user(
             nombre=nombre,
             apellido=apellido,
@@ -92,7 +100,7 @@ def _ensure_user_for_dev(dev: int) -> Optional[dict]:
             peso=round(peso, 1),
             device_id=dev,
             sexo=sexo,
-            hr_rest=hr_rest,
+            hr_max=hr_max_est,   # opcional: quita esta línea si no quieres hr_max en DB
             is_sim=1
         )
     except Exception as e:
@@ -103,13 +111,13 @@ def _ensure_user_for_dev(dev: int) -> Optional[dict]:
 
 # -------------------- Plan de sesión --------------------
 def _build_session_plan(seed: int) -> List[Tuple[str, float, Tuple[float, float]]]:
-    """Secuencia (fase, duración_s, rango_frac_HRR)."""
+    """Secuencia (fase, duración_s, rango_frac_HRR usada internamente para sim)."""
     rnd = random.Random(seed)
     return [
-        ("warmup", rnd.uniform(120, 240), (0.45, 0.60)),
-        ("steady", rnd.uniform(180, 360), (0.65, 0.80)),
-        ("intervals", rnd.uniform(240, 420), (0.70, 0.90)),
-        ("cooldown", rnd.uniform(90, 180), (0.40, 0.55)),
+        ("warmup",   rnd.uniform(120, 240), (0.45, 0.60)),
+        ("steady",   rnd.uniform(180, 360), (0.65, 0.80)),
+        ("intervals",rnd.uniform(240, 420), (0.70, 0.90)),
+        ("cooldown", rnd.uniform( 90, 180), (0.40, 0.55)),
     ]
 
 
@@ -127,8 +135,12 @@ class _DeviceSim:
         self.sex = (user.get("sexo") or "M").lower()
         self.age = user.get("edad") or 35
         self.weight = user.get("peso") or 70.0
+
+        # Internos de simulación:
+        # - Usar hr_rest del perfil si existe (no será el caso para simulados nuevos),
+        #   si no, estimar internamente (sin persistir).
         self.hrrest = user.get("hr_rest") or _estimate_hrrest(self.sex, self.age)
-        self.hrmax = _tanaka_hrmax(self.age)
+        self.hrmax  = _tanaka_hrmax(self.age)
 
         self.plan = _build_session_plan(seed)
         self.phase_idx = 0
@@ -136,6 +148,7 @@ class _DeviceSim:
         self.hr = float(self.hrrest + 3.0)
         self.target_frac = 0.5
 
+        # Dinámica/ruido
         self.tau_rise = self.rnd.uniform(6.0, 9.0)
         self.tau_fall = self.rnd.uniform(4.0, 7.0)
         self.noise_sigma = 1.5
@@ -143,7 +156,7 @@ class _DeviceSim:
         self.artifact_bpm = 3.0
 
     def _advance_phase_if_needed(self):
-        name, dur, _ = self.plan[self.phase_idx]
+        _name, dur, _ = self.plan[self.phase_idx]
         if self.phase_elapsed >= dur:
             self.phase_idx = (self.phase_idx + 1) % len(self.plan)
             self.phase_elapsed = 0.0
@@ -151,8 +164,10 @@ class _DeviceSim:
     def _pick_target_frac(self) -> float:
         name, _dur, (fmin, fmax) = self.plan[self.phase_idx]
         frac = self.rnd.uniform(fmin, fmax)
+        # oscilación suave
         frac += 0.02 * math.sin(2 * math.pi * 0.2 * self.phase_elapsed)
         frac = max(0.35, min(0.95, frac))
+        # diente de sierra en intervalos
         if "interval" in name:
             period = self.rnd.uniform(20, 40)
             saw = (self.phase_elapsed % period) / period
@@ -169,6 +184,7 @@ class _DeviceSim:
         alpha = 1.0 - math.exp(-self.dt / max(0.001, tau))
         self.hr += alpha * (target - self.hr)
 
+        # ruido + artefactos
         self.hr += self.rnd.gauss(0.0, self.noise_sigma)
         if self.rnd.random() < self.artifact_prob:
             self.hr += self.rnd.uniform(-self.artifact_bpm, self.artifact_bpm)
@@ -207,8 +223,9 @@ def start_simulator(state: Dict[int, dict],
                     cleanup_on_start: bool = True) -> Optional[threading.Thread]:
     """
     Lanza un hilo daemon con el simulador y lo devuelve.
-    - Siempre que se llama (y hay DB), limpia usuarios simulados previos si cleanup_on_start=True.
+    - Limpia usuarios simulados previos (is_sim=1) si cleanup_on_start=True y hay DB.
     - Si n_devices==0 (o device_ids vacío), NO lanza hilo ni escribe en STATE.
+    - Si auto_create_users=True y hay DB: crea usuarios simulados SIN hr_rest en DB.
     """
     # 🔹 limpiar usuarios simulados anteriores SIEMPRE que se llame
     if cleanup_on_start and _HAS_DB:

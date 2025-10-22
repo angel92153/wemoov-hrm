@@ -1,0 +1,154 @@
+/* ========= Brand CSS (negro, blanco, morado) ========= */
+/* Tipografías: Inter para texto / Space Grotesk para headings y datos */
+@font-face{
+  font-family:"Inter";
+  src:local("Inter"), url("/static/fonts/Inter-Variable.woff2") format("woff2-variations");
+  font-display:swap; font-weight:100 900;
+}
+@font-face{
+  font-family:"Space Grotesk";
+  src:local("Space Grotesk"), url("/static/fonts/SpaceGrotesk-Variable.woff2") format("woff2-variations");
+  font-display:swap; font-weight:300 800;
+}
+
+:root{
+  /* Colores de marca */
+  --bg:#0a0a0a;           /* negro base */
+  --card:#121212;         /* negro elevado */
+  --text:#f5f5f6;         /* blanco suave */
+  --muted:#a5adbb;        /* gris frío para secundarios */
+  --border:#262626;       /* gris oscuro para bordes */
+  --accent:#8b5cf6;       /* morado principal */
+  --accent-2:#a78bfa;     /* morado claro para hover/gradientes */
+  --danger:#ef4444;       /* rojo para acciones destructivas */
+  --ok:#22c55e;           /* verde para estados ok */
+
+  /* Shadows y radios */
+  --shadow-lg: 0 8px 30px rgba(0,0,0,.35);
+  --radius: 14px;
+
+  /* Tipografías */
+  --ff-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
+  --ff-head: "Space Grotesk", var(--ff-ui);
+
+  /* Tallas */
+  --fs-h1: clamp(1.25rem, 2.6vw, 2rem);
+  --fs-ui: 16px;
+  --fs-small: 13px;
+
+  /* Layout */
+  --page-pad: clamp(14px, 3.2vw, 28px);
+  --wrap-w: 1100px;
+}
+
+/* Reset mínimo */
+*{ box-sizing:border-box; }
+html,body{ height:100%; }
+html{ background:var(--bg); color:var(--text); }
+body{
+  margin:0; padding:var(--page-pad);
+  font-family:var(--ff-ui);
+  font-size:var(--fs-ui);
+  line-height:1.45;
+}
+
+/* Contenedor */
+.wrap{ max-width:var(--wrap-w); margin:0 auto; }
+
+/* Títulos */
+h1{
+  margin:0 0 12px;
+  font-family:var(--ff-head);
+  font-weight:800; letter-spacing:.3px;
+  font-size:var(--fs-h1);
+}
+
+/* Toolbar */
+.toolbar{
+  display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin:10px 0 16px;
+}
+.btn{
+  appearance:none; border:1px solid var(--border);
+  background:var(--card); color:var(--text);
+  border-radius:12px; padding:10px 14px; font-weight:700; cursor:pointer;
+  text-decoration:none; display:inline-flex; align-items:center; gap:8px;
+  transition: border-color .2s ease, transform .06s ease;
+}
+.btn:hover{ border-color:var(--accent); }
+.btn:active{ transform: translateY(1px); }
+.btn-accent{ background:linear-gradient(135deg,var(--accent),var(--accent-2)); color:#0b0615; border-color:transparent; }
+.btn-ghost{ background:transparent; }
+.btn-danger{ background:var(--danger); color:#fff; border-color:transparent; }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
+
+.filters{
+  display:inline-flex; gap:0; border:1px solid var(--border); border-radius:12px; overflow:hidden;
+}
+.filters button{
+  border:none; background:transparent; color:var(--text);
+  padding:10px 12px; font-weight:800; cursor:pointer;
+}
+.filters button + button{ border-left:1px solid var(--border); }
+.filters button.active{ background:var(--accent); color:#0b0615; }
+
+/* Tarjeta / Panel */
+.panel{
+  background:var(--card); border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+
+/* Tabla responsive */
+.table-wrap{ overflow:auto; border-radius:var(--radius); }
+table{ width:100%; border-collapse:collapse; min-width:780px; }
+th,td{
+  padding:12px; text-align:center; border-bottom:1px solid var(--border);
+  font-size:14px;
+}
+thead th{
+  background:linear-gradient(180deg, #171717, #121212);
+  font-family:var(--ff-head);
+}
+tbody tr:last-child td{ border-bottom:none; }
+tr.sim{ background: rgba(139,92,246,0.06); }
+.muted{ color:var(--muted); }
+
+/* Badges */
+.badge{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800;
+  background:#1c1433; color:var(--accent); border:1px solid #2a1e4d; margin-left:8px;
+}
+/* Variantes de badge para HRmax */
+.badge-auto{
+  background:#171236; border-color:#2a1e4d; color:var(--accent);
+}
+.badge-manual{
+  background:#162a1c; border-color:#254a34; color:#34d399; /* verde */
+}
+.badge-pill{ padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; }
+.badge-inline{ margin-left:8px; }
+.badge .dot{
+  width:8px; height:8px; border-radius:50%; background:var(--accent);
+  box-shadow: 0 0 8px rgba(139,92,246, .7);
+}
+
+/* Formulario */
+form.grid{
+  max-width:780px; display:grid; grid-template-columns:1fr; gap:12px 16px;
+}
+@media (min-width:860px){
+  form.grid{ grid-template-columns:1fr 1fr; }
+}
+label{ font-weight:700; font-size:.95rem; font-family:var(--ff-head); }
+input, select{
+  width:100%; padding:12px; border:1px solid var(--border); border-radius:10px;
+  background:#0f0f0f; color:var(--text); font-size:1rem;
+}
+input::placeholder{ color:#6b7280; }
+.form-help{ color:var(--muted); font-size:var(--fs-small); margin-top:6px; }
+.form-row{ display:grid; grid-template-columns:1fr auto; gap:8px; }
+.actions{ grid-column:1/-1; display:flex; gap:10px; margin-top:6px; flex-wrap:wrap; }
+
+/* Helpers */
+.card-pad{ padding:16px; }
+.hr{ border-color:var(--border); }

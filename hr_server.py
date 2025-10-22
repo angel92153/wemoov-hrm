@@ -4,7 +4,7 @@ import logging
 import os
 from flask import Flask, jsonify, request, send_from_directory, render_template, redirect, url_for
 
-import ant_hr
+import hr_real
 import db
 import metrics
 
@@ -40,13 +40,59 @@ if _HAS_COMPRESS:
 
 app.config["JSONIFY_PRETTYPRINT_REGULAR"] = False
 
+# ===== Filtro Jinja: Tanaka HRmax si falta en DB =====
+def tanaka_hrmax(edad):
+    try:
+        e = int(edad)
+        if e > 0:
+            return int(round(208 - 0.7 * e))
+    except Exception:
+        pass
+    return None
+
+app.jinja_env.filters['tanaka'] = tanaka_hrmax
+# =====================================================
+
+from datetime import date, datetime
+
+def age_from_dob(dob_str):
+    if not dob_str:
+        return None
+    try:
+        y, m, d = map(int, dob_str.split('-'))
+        dob = date(y, m, d)
+        today = date.today()
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        return max(0, age)
+    except Exception:
+        return None
+
+def tanaka_from_age(age):
+    try:
+        e = int(age)
+        if e > 0:
+            return int(round(208 - 0.7 * e))
+    except Exception:
+        pass
+    return None
+
+def tanaka_from_dob(dob_str):
+    a = age_from_dob(dob_str)
+    return tanaka_from_age(a)
+
+# Filtros Jinja
+app.jinja_env.filters['age_from_dob'] = age_from_dob
+app.jinja_env.filters['tanaka_dob']   = tanaka_from_dob
+app.jinja_env.filters['tanaka']       = tanaka_from_age  # compat con la versión anterior
+
+
 # ======================= CONFIG SERVIDOR =======================
-SIM_DEVICES   = int(os.getenv("HRM_SIM_DEVICES", "16"))
+SIM_DEVICES   = int(os.getenv("HRM_SIM_DEVICES", "3"))
 SIM_BASE_ID   = int(os.getenv("HRM_SIM_BASE_ID", "10000"))
 SIM_UPDATE_HZ = float(os.getenv("HRM_SIM_UPDATE_HZ", "2"))
 SIM_AUTOCREATE = os.getenv("HRM_SIM_AUTOCREATE", "1") in ("1", "true", "yes", "on")
 
-MIN_REFRESH_S = float(os.getenv("HRM_MIN_REFRESH_S", "2.5"))
+MIN_REFRESH_S = float(os.getenv("HRM_MIN_REFRESH_S", "1"))
 DEVICE_RECENT_SECS = float(os.getenv("HRM_DEVICE_RECENT_SECS", "45"))
 # ===============================================================
 
@@ -72,12 +118,25 @@ def _refresh_user_cache_if_needed():
     if now - _USER_CACHE_TS > USER_CACHE_TTL:
         _USER_CACHE_TS = now
 
-def _get_user(dev):
+def _get_user_for_dev(dev: int):
+    """
+    Devuelve el usuario asignado a un device_id:
+    - Si es un DEMO y está asignado en memoria -> ese usuario.
+    - Si no, el de DB por device_id (si existe).
+    """
+    # DEMO override
+    if dev in DEMO_ASSIGN:
+        uid = DEMO_ASSIGN[dev]
+        if uid:
+            return db.get_user(uid)
+
+    # fallback DB por device_id
     u = USER_CACHE.get(dev)
     if u is None:
         u = db.get_user_by_device(dev)
         USER_CACHE[dev] = u
     return u
+
 
 def _state_signature(limit: int) -> str:
     items = list(STATE.items())
@@ -93,6 +152,56 @@ def _parse_ts(ts_iso: str | None):
         return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).astimezone(timezone.utc)
     except Exception:
         return None
+    
+# ======================= DEMO SLOTS (solo en memoria) =======================
+# Pares (label, device_id) — puedes cambiar los IDs si quieres
+DEMO_SLOTS = [
+    ("DEMO 1", 36466), ("DEMO 2", 91002), ("DEMO 3", 91003), ("DEMO 4", 91004), ("DEMO 5", 91005),
+    ("DEMO 6", 91006), ("DEMO 7", 91007), ("DEMO 8", 91008), ("DEMO 9", 91009), ("DEMO 10", 91010),
+]
+
+# Asignaciones vivas solo en esta ejecución:
+#  - demo_dev_id -> user_id
+#  - user_id     -> demo_dev_id
+DEMO_ASSIGN = {}
+USER_TO_DEMO = {}
+
+def assign_demo_to_user(demo_dev_id: int, user_id: int | None):
+    """
+    Asigna un DEMO a un usuario en memoria.
+    - Si el DEMO ya estaba en otro usuario, lo desasigna de ese usuario.
+    - Si el usuario tenía otro DEMO, lo libera.
+    - Si user_id es None -> libera ese DEMO.
+    """
+    # liberar si user_id=None
+    if user_id is None:
+        prev_user = DEMO_ASSIGN.pop(demo_dev_id, None)
+        if prev_user is not None:
+            USER_TO_DEMO.pop(prev_user, None)
+        return
+
+    # 1) si el demo estaba asignado a otro usuario, liberarlo de ese usuario
+    prev_user = DEMO_ASSIGN.get(demo_dev_id)
+    if prev_user is not None and prev_user != user_id:
+        USER_TO_DEMO.pop(prev_user, None)
+
+    # 2) si el usuario tenía otro demo, liberarlo
+    prev_demo = USER_TO_DEMO.get(user_id)
+    if prev_demo is not None and prev_demo != demo_dev_id:
+        DEMO_ASSIGN.pop(prev_demo, None)
+
+    # 3) asignar
+    DEMO_ASSIGN[demo_dev_id] = user_id
+    USER_TO_DEMO[user_id] = demo_dev_id
+
+
+def demo_label_for(dev_id: int) -> str | None:
+    for label, d in DEMO_SLOTS:
+        if d == dev_id:
+            return label
+    return None
+# ===========================================================================
+
 
 # ==================== RUTAS ESTÁTICAS ====================
 @app.route("/")
@@ -134,7 +243,7 @@ def live():
     for dev, val in list(STATE.items())[:256]:
         hr = val.get("hr")
         ts = val.get("ts")
-        user = _get_user(dev)
+        user = _get_user_for_dev(dev)
 
         mrec = METRICS_CACHE.get(dev)
         if mrec and mrec.get("ts") == ts:
@@ -187,42 +296,82 @@ def users_list():
 def add_user():
     if request.method == "POST":
         form = request.form
-        db.create_user(
+
+        # Auto/manual FC máx
+        hr_max_auto = 1 if form.get("hr_max_auto") == "on" else 0
+        hr_max_val = int(form.get("hr_max") or 0) or None
+        if hr_max_auto:
+            hr_max_val = None  # se calcula dinámicamente
+
+        # Creamos usuario (device_id real se guarda si lo ponen; DEMO no se persiste)
+        user_id = db.create_user(
             nombre=form.get("nombre", ""),
             apellido=form.get("apellido", ""),
             apodo=form.get("apodo", ""),
-            edad=int(form.get("edad") or 0),
-            peso=float(form.get("peso") or 0),
-            device_id=int(form.get("device_id") or 0),
+            edad=None,
+            peso=float(form.get("peso") or 0) or None,
+            device_id=int(form.get("device_id") or 0) or None,
             sexo=form.get("sexo", "M"),
             hr_rest=int(form.get("hr_rest") or 0) or None,
-            hr_max=int(form.get("hr_max") or 0) or None,
-            is_sim=0
+            hr_max=hr_max_val,
+            is_sim=0,
+            dob=form.get("dob") or None,
+            hr_max_auto=hr_max_auto
         )
+
+        # DEMO: si seleccionaron uno, asignarlo SOLO en memoria
+        demo_dev = int(form.get("demo_dev") or 0) or None
+        if demo_dev:
+            assign_demo_to_user(demo_dev, user_id)
+
         return redirect(url_for("users_list"))
-    return render_template("user_form.html", user=None)
+
+    # GET -> pasar slots al template
+    return render_template("user_form.html", user=None, demo_slots=DEMO_SLOTS, demo_for_user=None)
 
 @app.route("/users/edit/<int:user_id>", methods=["GET", "POST"])
 def edit_user(user_id):
     user = db.get_user(user_id)
     if not user:
         return "Usuario no encontrado", 404
+
     if request.method == "POST":
         form = request.form
+
+        hr_max_auto = 1 if form.get("hr_max_auto") == "on" else 0
+        hr_max_val = int(form.get("hr_max") or 0) or None
+        if hr_max_auto:
+            hr_max_val = None
+
         db.update_user(
             user_id,
             nombre=form.get("nombre", ""),
             apellido=form.get("apellido", ""),
             apodo=form.get("apodo", ""),
-            edad=int(form.get("edad") or 0),
-            peso=float(form.get("peso") or 0),
-            device_id=int(form.get("device_id") or 0),
+            edad=None,
+            peso=float(form.get("peso") or 0) or None,
+            device_id=int(form.get("device_id") or 0) or None,
             sexo=form.get("sexo", "M"),
             hr_rest=int(form.get("hr_rest") or 0) or None,
-            hr_max=int(form.get("hr_max") or 0) or None
+            hr_max=hr_max_val,
+            dob=form.get("dob") or None,
+            hr_max_auto=hr_max_auto
         )
+
+        # DEMO: reasignar si viene alguno
+        demo_dev = int(form.get("demo_dev") or 0) or None
+        if demo_dev:
+            assign_demo_to_user(demo_dev, user_id)
+        else:
+            # Si envían vacío y el usuario tenía DEMO, liberar
+            if USER_TO_DEMO.get(user_id):
+                assign_demo_to_user(USER_TO_DEMO[user_id], None)
+
         return redirect(url_for("users_list"))
-    return render_template("user_form.html", user=user)
+
+    # GET -> indicar cuál tiene asignado este user ahora (si alguno)
+    demo_for_user = USER_TO_DEMO.get(user_id)
+    return render_template("user_form.html", user=user, demo_slots=DEMO_SLOTS, demo_for_user=demo_for_user)
 
 @app.route("/users/delete/<int:user_id>")
 def delete_user(user_id):
@@ -320,7 +469,7 @@ def main():
     db.init_db()
 
     # Lanzar ANT real
-    t_real = threading.Thread(target=ant_hr.run_ant_listener, args=(STATE,), daemon=True)
+    t_real = threading.Thread(target=hr_real.run_ant_listener, args=(STATE,), daemon=True)
     t_real.start()
 
     # Lanzar simulador SIEMPRE (aunque SIM_DEVICES=0, para limpieza de simulados en DB si aplica)
