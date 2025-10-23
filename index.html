@@ -192,8 +192,8 @@
         if (!s.active && s.scheduled_ts){
           const cd = s.countdown_s || 0;
           if (s.show_countdown){
-            setPhaseColor('#6b21a8');
-            phaseEl.textContent = 'Comienza en';
+            setPhaseColor('#ffffff');
+            phaseEl.textContent = 'COUNTDOWN';
             timerEl.textContent = fmtMMSS(cd);
             timerEl.classList.remove('invisible');
           }else{

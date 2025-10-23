@@ -6,7 +6,7 @@ Gestor de sesiones/clases con:
 - Controles: start/stop/status/next/prev/toggle_pause/schedule/unschedule.
 - Calendario semanal (L->D) con SOLO horarios; clase por defecto global.
 - Programación puntual por día (sin hora).
-- Persistencia en SQLite (sessions.db). Sin dependencias de Flask.
+- Persistencia en SQLite (sessions.db). Sin dependencias de Flask).
 """
 
 import time
@@ -59,7 +59,7 @@ DDL = [
         FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE
     );
     """,
-    # registro de arranques de weekly para no duplicar en el mismo día
+    # registro de arranques/consumos de weekly para no duplicar en el mismo día
     """
     CREATE TABLE IF NOT EXISTS schedule_log (
         sched_id INTEGER NOT NULL,
@@ -91,7 +91,7 @@ def init_db_with_defaults():
         cur = con.cursor()
         for stmt in DDL:
             cur.executescript(stmt)
-        # Inserta clase por defecto si no existe (sin "(estándar)")
+        # Inserta clase por defecto si no existe
         cur.execute("SELECT COUNT(*) c FROM classes")
         if cur.fetchone()["c"] == 0:
             cur.execute("INSERT INTO classes(id,label) VALUES(?,?)", ("moov", "Moov Class"))
@@ -192,6 +192,53 @@ def set_default_class_id(cid: str):
         con.commit()
 
 
+# ======================= HELPERS COUNTDOWN SEMANAL =======================
+
+WEEKLY_LEAD_S = 5 * 60  # 5 minutos
+
+def _mk_epoch_for_local(hh: int, mm: int, days_ahead: int = 0) -> float:
+    """Construye epoch local para hoy + days_ahead a HH:MM (segundos=0)."""
+    import time as _t
+    tm = _t.localtime()
+    # mktime se encarga del overflow de día/mes
+    target = _t.struct_time((
+        tm.tm_year, tm.tm_mon, tm.tm_mday + days_ahead,
+        hh, mm, 0,  # H M S
+        -1, -1, -1
+    ))
+    return _t.mktime(target)
+
+def _next_weekly_occurrence(now: float) -> Optional[Tuple[int, float]]:
+    """
+    Devuelve (sched_id, epoch) del siguiente horario semanal >= now,
+    buscando en los próximos 7 días.
+    """
+    import time as _t
+    with _connect() as con:
+        rows = con.execute("SELECT sched_id, dow, time_str FROM weekly_schedule").fetchall()
+    if not rows:
+        return None
+
+    tm_now = _t.localtime(now)
+    now_dow = tm_now.tm_wday  # 0..6
+    candidates: List[Tuple[int, float]] = []
+
+    for r in rows:
+        sched_id = int(r["sched_id"])
+        dow = int(r["dow"])
+        hh, mm = map(int, str(r["time_str"])[:5].split(":"))
+
+        delta_days = (dow - now_dow) % 7
+        t0 = _mk_epoch_for_local(hh, mm, days_ahead=delta_days)
+        if t0 < now:
+            # si ya pasó hoy, empuja a la semana siguiente
+            t0 = _mk_epoch_for_local(hh, mm, days_ahead=(delta_days + 7))
+        candidates.append((sched_id, t0))
+
+    sched_id, epoch = min(candidates, key=lambda x: x[1])
+    return (sched_id, epoch)
+
+
 # ======================= SESSION MANAGER =======================
 
 class SessionManager:
@@ -205,7 +252,7 @@ class SessionManager:
         self.class_id: Optional[str] = None
         self.start_ts: Optional[float] = None
         self.phases: List[Dict[str, Any]] = []
-        self.scheduled_ts: Optional[float] = None
+        self.scheduled_ts: Optional[float] = None  # manual puntual
         self.lead_s: int = 0
         self.paused: bool = False
         self.pause_ts: Optional[float] = None
@@ -255,45 +302,71 @@ class SessionManager:
             return row["class_id"] if row else None
 
     def _maybe_autostart_by_calendar(self):
-        if self.active or self.scheduled_ts is not None:
-            return
-        now_tm = time.localtime(self._now())
+        """
+        Disparo por calendario semanal (no preemptivo):
+          - Si coincide HH:MM y no se ha consumido hoy:
+              * si NO hay sesión activa ni hay 'scheduled_ts' manual => arrancar clase por calendario
+              * si SÍ hay sesión activa => NO interrumpir, solo registrar consumo de hoy
+        Nota: schedule_log garantiza 1 consumo por (sched_id, ymd).
+        """
+        now = self._now()
+        now_tm = time.localtime(now)
         dow = now_tm.tm_wday  # 0 lunes .. 6 domingo
         ymd = f"{now_tm.tm_year:04d}-{now_tm.tm_mon:02d}-{now_tm.tm_mday:02d}"
         hhmm = f"{now_tm.tm_hour:02d}:{now_tm.tm_min:02d}"
+
         with _connect() as con:
             cur = con.cursor()
             cur.execute("SELECT sched_id FROM weekly_schedule WHERE dow=? AND time_str=?", (dow, hhmm))
-            wr = cur.fetchone()
-            if wr:
-                sched_id = wr["sched_id"]
+            rows = cur.fetchall()
+            if not rows:
+                return
+
+            for r in rows:
+                sched_id = r["sched_id"]
+                # ¿ya consumido hoy?
                 cur.execute("SELECT 1 FROM schedule_log WHERE sched_id=? AND ymd=?", (sched_id, ymd))
-                if not cur.fetchone():
-                    cls = self._oneoff_for_day(ymd) or get_default_class_id()
+                if cur.fetchone():
+                    continue
+
+                # Clase planificada para el día (one-off > default)
+                cls = self._oneoff_for_day(ymd) or get_default_class_id()
+
+                if (not self.active) and (self.scheduled_ts is None):
+                    # libre: arrancar por calendario
                     self.start(cls)
-                    cur.execute("INSERT OR REPLACE INTO schedule_log(sched_id, ymd, last_start_ts) VALUES(?,?,?)",
-                                (sched_id, ymd, self._now()))
-                    con.commit()
-                    return
+                # Siempre registrar consumo del disparo semanal de hoy
+                cur.execute(
+                    "INSERT OR REPLACE INTO schedule_log(sched_id, ymd, last_start_ts) VALUES(?,?,?)",
+                    (sched_id, ymd, now))
+                con.commit()
+            return
 
     def _maybe_autostart(self):
-        if not self.active and self.scheduled_ts is not None and self._now() >= self.scheduled_ts:
-            self.active = True
-            self.start_ts = self._now()
-            self.phases = get_phases(self.class_id or get_default_class_id())
-            self.paused = False
-            self.pause_ts = None
-            self.pause_accum = 0
+        # Programación manual puntual (si llega su hora)
+        if self.scheduled_ts is not None and self._now() >= self.scheduled_ts:
+            if not self.active:
+                # arrancar manual
+                self.active = True
+                self.start_ts = self._now()
+                self.phases = get_phases(self.class_id or get_default_class_id())
+                self.paused = False
+                self.pause_ts = None
+                self.pause_accum = 0
+            # Si hay una sesión activa, no se arranca (queda pendiente hasta que termines)
             return
+
+        # Calendario semanal (no preemptivo; consume si coincide)
         self._maybe_autostart_by_calendar()
 
     # -------- API Pública ----------
     def start(self, class_id: str = "moov"):
+        """Inicio inmediato (manual). Interrumpe cualquier countdown manual y reemplaza lo que hubiera."""
         self.active = True
         self.class_id = class_id
         self.start_ts = self._now()
         self.phases = get_phases(class_id)
-        self.scheduled_ts = None
+        self.scheduled_ts = None  # limpia programación puntual
         self.lead_s = 0
         self.paused = False
         self.pause_ts = None
@@ -305,6 +378,7 @@ class SessionManager:
         self.reset()
 
     def schedule(self, class_id: str, start_epoch: float, lead_s: int = 0):
+        """Programa manual puntual (no recurrente) con countdown configurable."""
         if start_epoch <= self._now():
             raise ValueError("La hora debe ser futura")
         self.class_id = class_id
@@ -363,6 +437,12 @@ class SessionManager:
             self.pause_ts = now
 
     def status(self) -> dict:
+        """
+        - Arranque automático si procede (manual puntual pasado / semanal a la hora exacta).
+        - Cuenta atrás:
+            * Manual puntual: según self.lead_s.
+            * Semanal: 5 minutos antes del siguiente horario (WEEKLY_LEAD_S), solo si no hay otra pending manual.
+        """
         self._maybe_autostart()
         now = self._now()
         resp = {
@@ -374,12 +454,35 @@ class SessionManager:
             "paused": self.paused,
             "default_class_id": get_default_class_id(),
         }
+
+        # ====== COUNTDOWN PARA PROGRAMACIÓN MANUAL ======
         if not self.active and self.scheduled_ts is not None:
             delta = int(self.scheduled_ts - now)
             resp["countdown_s"] = max(0, delta)
             resp["show_countdown"] = (delta <= self.lead_s)
             resp["total_dur_s"] = self._total_dur(get_phases(self.class_id or get_default_class_id()))
             return resp
+
+        # ====== COUNTDOWN PARA CALENDARIO SEMANAL ======
+        if not self.active and self.scheduled_ts is None:
+            nxt = _next_weekly_occurrence(now)
+            if nxt:
+                sched_id, epoch = nxt
+                delta = int(epoch - now)
+                if 0 <= delta <= WEEKLY_LEAD_S:
+                    import time as _t
+                    ymd = f"{_t.localtime(epoch).tm_year:04d}-{_t.localtime(epoch).tm_mon:02d}-{_t.localtime(epoch).tm_mday:02d}"
+                    planned_class = self._oneoff_for_day(ymd) or get_default_class_id()
+                    resp.update({
+                        "show_countdown": True,
+                        "countdown_s": delta,
+                        "next_class_id": planned_class,
+                        "scheduled_ts": int(epoch),
+                        "total_dur_s": self._total_dur(get_phases(planned_class)),
+                    })
+                    return resp
+
+        # ====== SESIÓN ACTIVA ======
         if self.active:
             phases = self.phases or get_phases(self.class_id or get_default_class_id())
             elapsed, total, idx, phase_elapsed, phase_rem, phase = self._progress(phases, self.start_ts, now)
@@ -397,6 +500,8 @@ class SessionManager:
                     "phase_color": phase["color"],
                 })
             return resp
+
+        # Estado inactivo sin countdown
         return resp
 
     # ------- Calendario semanal -------

@@ -15,7 +15,7 @@
       letter-spacing: .5px;
     }
     .timer.phase{ color: var(--text); }
-    .timer.countdown{ color: #ffffff; } /* blanco para pre-countdown */
+    .timer.countdown{ color: #ffffff; }
     .phase-label{ font-size: clamp(14px, 2.4vw, 18px); color: var(--muted); }
     .controls{ display:flex; gap:18px; align-items:center; justify-content:center; }
     .ctrl{
@@ -30,12 +30,39 @@
     .pill{ padding:6px 10px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:13px; }
     .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
 
-    /* Colores de fase (borde brillante) */
+    /* Panel de selección de clase */
+    .panel{ background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow-lg); }
+    .panel-inner{ padding:16px; display:grid; grid-template-columns:1fr; gap:10px; }
+    .form-row{ display:grid; grid-template-columns:1fr auto auto; gap:8px; }
+    select, button.btn{
+      padding:10px 12px; border-radius:10px; border:1px solid var(--border);
+      background:#0f0f0f; color:var(--text); font-family:var(--ff-ui); font-weight:700;
+    }
+    button.btn{ background:linear-gradient(135deg,var(--accent),var(--accent-2)); color:#0b0615; border-color:transparent; cursor:pointer; }
+    button.btn:disabled{ opacity:.6; cursor:not-allowed; }
+    button.ghost{ background:#151515; color:var(--text); border:1px solid var(--border); }
+
+    .status{ font-size:13px; color:var(--muted); text-align:center; min-height:1.4em; }
     .glow{ box-shadow: 0 0 0 2px rgba(255,255,255,0.06), 0 0 34px rgba(255,255,255,0.12) inset; border-radius: 18px; padding:16px 24px; }
   </style>
 </head>
 <body>
 <div class="wrap-narrow">
+
+  <!-- Panel de selección / arranque manual -->
+  <div class="panel" style="margin: 12px auto 22px;">
+    <div class="panel-inner">
+      <div class="form-row">
+        <select id="classSelect" aria-label="Selecciona una clase">
+          <option value="">— Cargando clases… —</option>
+        </select>
+        <button id="reloadClasses" class="ghost">Recargar</button>
+        <button id="startClass" class="btn">Iniciar clase</button>
+      </div>
+      <div id="classStatus" class="status"></div>
+    </div>
+  </div>
+
   <div class="center">
     <div id="info" class="phase-label"></div>
     <div id="timer" class="timer">--:--</div>
@@ -57,9 +84,84 @@ function fmt(s){
   return String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0')
 }
 
+/* ==================== CARGA DE CLASES ==================== */
+async function loadClasses(){
+  const sel = $('classSelect')
+  const status = $('classStatus')
+  try{
+    status.textContent = 'Cargando clases…'
+    const r = await fetch('/session/classes', { cache:'no-store' })
+    const j = await r.json()
+    const list = Array.isArray(j.classes) ? j.classes : []
+
+    // Normalizamos posibles formatos: {id/ key/ class_id, label/ name/ title}
+    const rows = list.map(c => {
+      const id = c.id ?? c.key ?? c.class_id ?? c.slug ?? c.name ?? c.label
+      const label = c.label ?? c.name ?? c.title ?? String(id)
+      return id ? { id: String(id), label: String(label) } : null
+    }).filter(Boolean)
+
+    sel.innerHTML = ''
+    if (!rows.length){
+      sel.innerHTML = '<option value="">— No hay clases disponibles —</option>'
+      status.textContent = 'No hay clases en el catálogo.'
+      return
+    }
+    const frag = document.createDocumentFragment()
+    const opt0 = document.createElement('option')
+    opt0.value = ''; opt0.textContent = '— Selecciona una clase —'
+    frag.appendChild(opt0)
+    rows.forEach(({id,label}) => {
+      const opt = document.createElement('option')
+      opt.value = id
+      opt.textContent = label
+      frag.appendChild(opt)
+    })
+    sel.appendChild(frag)
+    status.textContent = ''
+  }catch(e){
+    $('classSelect').innerHTML = '<option value="">(Error cargando clases)</option>'
+    $('classStatus').textContent = 'No se pudieron cargar las clases.'
+  }
+}
+
+$('reloadClasses').onclick = loadClasses
+
+$('startClass').onclick = async () => {
+  const sel = $('classSelect')
+  const cid = sel.value
+  const status = $('classStatus')
+  if (!cid){
+    status.textContent = 'Selecciona una clase antes de iniciar.'
+    return
+  }
+  try{
+    $('startClass').disabled = true
+    status.textContent = 'Iniciando clase…'
+    const r = await fetch('/session/start', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ class_id: cid })
+    })
+    const j = await r.json()
+    if (j && j.ok){
+      status.textContent = 'Clase iniciada.'
+      // Forzar un poll inmediato para reflejar estado
+      poll()
+    }else{
+      status.textContent = 'No se pudo iniciar la clase.'
+    }
+  }catch(e){
+    status.textContent = 'Error iniciando la clase.'
+  }finally{
+    $('startClass').disabled = false
+  }
+}
+
+/* ==================== POLL DE ESTADO ==================== */
 async function poll(){
   try{
-    const r = await fetch('/session/status')
+    const r = await fetch('/session/status', { cache:'no-store' })
     const j = await r.json()
     const t = $('timer'), info = $('info'), controls = $('controls'), hint = $('hint')
 
@@ -67,7 +169,7 @@ async function poll(){
     if(!j.active && j.show_countdown){
       t.className = 'timer countdown'
       t.textContent = fmt(j.countdown_s ?? 0)
-      info.textContent = 'Comienza en'
+      info.textContent = 'COUNTDOWN'
       controls.style.display = 'none'
       hint.innerHTML = j.next_class_id ? `<span class="pill">Clase: ${j.next_class_id}</span>` : ''
       return
@@ -97,11 +199,14 @@ async function poll(){
   }
 }
 
+/* ==================== CONTROLES ==================== */
 $('prev').onclick   = ()=> fetch('/session/prev', {method:'POST'})
 $('next').onclick   = ()=> fetch('/session/next', {method:'POST'})
 $('toggle').onclick = ()=> fetch('/session/toggle_pause', {method:'POST'})
 
+/* ==================== INIT ==================== */
 setInterval(poll, 1000)
+loadClasses()
 poll()
 </script>
 </body>
