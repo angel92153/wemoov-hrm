@@ -79,19 +79,38 @@ DDL = [
 
 
 def _connect():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    # ⚙️ PRAGMAs de integridad + rendimiento
+    cur.execute("PRAGMA foreign_keys=ON;")
+    cur.execute("PRAGMA journal_mode=WAL;")
+    cur.execute("PRAGMA synchronous=NORMAL;")
+    cur.execute("PRAGMA temp_store=MEMORY;")
+    cur.execute("PRAGMA cache_size=-20000;")  # ~20MB
+    cur.close()
     return conn
 
 
 def init_db_with_defaults():
-    if not DB_PATH.exists():
-        pass
     with _connect() as con:
         cur = con.cursor()
+
+        # 1) TABLAS
         for stmt in DDL:
             cur.executescript(stmt)
-        # Inserta clase por defecto si no existe
+
+        # 2) ÍNDICES
+        cur.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_class_phases_class
+            ON class_phases(class_id, idx);
+        CREATE INDEX IF NOT EXISTS idx_weekly_dow_time
+            ON weekly_schedule(dow, time_str);
+        CREATE INDEX IF NOT EXISTS idx_schedule_log
+            ON schedule_log(sched_id, ymd);
+        """)
+
+        # 3) DATOS POR DEFECTO
         cur.execute("SELECT COUNT(*) c FROM classes")
         if cur.fetchone()["c"] == 0:
             cur.execute("INSERT INTO classes(id,label) VALUES(?,?)", ("moov", "Moov Class"))
@@ -111,8 +130,13 @@ def init_db_with_defaults():
                 "INSERT INTO class_phases(class_id,idx,phase_key,dur_s,color) VALUES(?,?,?,?,?)",
                 phases,
             )
-        # valor por defecto de clase global
-        cur.execute("INSERT OR IGNORE INTO settings(key,value) VALUES('default_class_id','moov')")
+
+        # 4) SETTINGS POR DEFECTO
+        cur.execute("""
+            INSERT OR IGNORE INTO settings(key,value)
+            VALUES('default_class_id','moov')
+        """)
+
         con.commit()
 
 
@@ -154,6 +178,12 @@ def upsert_class(class_id: str, label: str, phases: List[Dict[str, Any]]):
                 (class_id, i, str(ph["key"]), int(ph["dur_s"]), ph.get("color") or COLOR_YELLOW),
             )
         con.commit()
+    # invalidar caché de fases en la instancia global (si existe)
+    try:
+        if "SESSION" in globals() and isinstance(SESSION, SessionManager):  # type: ignore  # noqa: F821
+            SESSION._invalidate_phase_cache(class_id)  # type: ignore  # noqa: F821
+    except Exception:
+        pass
 
 
 def delete_class(class_id: str):
@@ -162,6 +192,11 @@ def delete_class(class_id: str):
     with _connect() as con:
         con.execute("DELETE FROM classes WHERE id=?", (class_id,))
         con.commit()
+    try:
+        if "SESSION" in globals() and isinstance(SESSION, SessionManager):  # type: ignore  # noqa: F821
+            SESSION._invalidate_phase_cache(class_id)  # type: ignore  # noqa: F821
+    except Exception:
+        pass
 
 
 def get_phases(class_id: Optional[str]) -> List[Dict[str, Any]]:
@@ -200,43 +235,12 @@ def _mk_epoch_for_local(hh: int, mm: int, days_ahead: int = 0) -> float:
     """Construye epoch local para hoy + days_ahead a HH:MM (segundos=0)."""
     import time as _t
     tm = _t.localtime()
-    # mktime se encarga del overflow de día/mes
     target = _t.struct_time((
         tm.tm_year, tm.tm_mon, tm.tm_mday + days_ahead,
         hh, mm, 0,  # H M S
         -1, -1, -1
     ))
     return _t.mktime(target)
-
-def _next_weekly_occurrence(now: float) -> Optional[Tuple[int, float]]:
-    """
-    Devuelve (sched_id, epoch) del siguiente horario semanal >= now,
-    buscando en los próximos 7 días.
-    """
-    import time as _t
-    with _connect() as con:
-        rows = con.execute("SELECT sched_id, dow, time_str FROM weekly_schedule").fetchall()
-    if not rows:
-        return None
-
-    tm_now = _t.localtime(now)
-    now_dow = tm_now.tm_wday  # 0..6
-    candidates: List[Tuple[int, float]] = []
-
-    for r in rows:
-        sched_id = int(r["sched_id"])
-        dow = int(r["dow"])
-        hh, mm = map(int, str(r["time_str"])[:5].split(":"))
-
-        delta_days = (dow - now_dow) % 7
-        t0 = _mk_epoch_for_local(hh, mm, days_ahead=delta_days)
-        if t0 < now:
-            # si ya pasó hoy, empuja a la semana siguiente
-            t0 = _mk_epoch_for_local(hh, mm, days_ahead=(delta_days + 7))
-        candidates.append((sched_id, t0))
-
-    sched_id, epoch = min(candidates, key=lambda x: x[1])
-    return (sched_id, epoch)
 
 
 # ======================= SESSION MANAGER =======================
@@ -257,6 +261,10 @@ class SessionManager:
         self.paused: bool = False
         self.pause_ts: Optional[float] = None
         self.pause_accum: int = 0
+
+        # caches internas
+        self._phase_cache: dict[str, List[Dict[str, Any]]] = {}
+        self._weekly_cache = {"rows": None, "ts": 0}
 
     # -------- Helpers internos ----------
     def _now(self) -> float:
@@ -294,6 +302,63 @@ class SessionManager:
                 return (elapsed, total, i, phase_elapsed, phase_remaining, ph)
             acc += dur
         return (total, total, None, 0, 0, None)
+
+    # ---------- Helpers de caché ----------
+    def _get_phases_cached(self, class_id: Optional[str]) -> List[Dict[str, Any]]:
+        if not class_id:
+            return []
+        if class_id not in self._phase_cache:
+            self._phase_cache[class_id] = get_phases(class_id)
+        return self._phase_cache[class_id]
+
+    def _invalidate_phase_cache(self, class_id: Optional[str] = None):
+        if class_id:
+            self._phase_cache.pop(class_id, None)
+        else:
+            self._phase_cache.clear()
+
+    def _weekly_rows(self):
+        """Lee weekly_schedule con caché (TTL 60s)."""
+        import time as _t
+        now = _t.time()
+        if (self._weekly_cache["rows"] is None) or (now - self._weekly_cache["ts"] > 60):
+            with _connect() as con:
+                self._weekly_cache["rows"] = con.execute(
+                    "SELECT sched_id, dow, time_str FROM weekly_schedule"
+                ).fetchall()
+            self._weekly_cache["ts"] = now
+        return self._weekly_cache["rows"]
+
+    def _invalidate_weekly_cache(self):
+        self._weekly_cache = {"rows": None, "ts": 0}
+
+    def _next_weekly_occurrence(self, now: float) -> Optional[Tuple[int, float]]:
+        """
+        Devuelve (sched_id, epoch) del siguiente horario semanal >= now,
+        buscando en los próximos 7 días.
+        """
+        import time as _t
+        rows = self._weekly_rows()
+        if not rows:
+            return None
+
+        tm_now = _t.localtime(now)
+        now_dow = tm_now.tm_wday  # 0..6
+        candidates: List[Tuple[int, float]] = []
+
+        for r in rows:
+            sched_id = int(r["sched_id"])
+            dow = int(r["dow"])
+            hh, mm = map(int, str(r["time_str"])[:5].split(":"))
+
+            delta_days = (dow - now_dow) % 7
+            t0 = _mk_epoch_for_local(hh, mm, days_ahead=delta_days)
+            if t0 < now:
+                t0 = _mk_epoch_for_local(hh, mm, days_ahead=(delta_days + 7))
+            candidates.append((sched_id, t0))
+
+        sched_id, epoch = min(candidates, key=lambda x: x[1])
+        return (sched_id, epoch)
 
     # --- calendario semanal / one-off (día) ---
     def _oneoff_for_day(self, ymd: str) -> Optional[str]:
@@ -349,11 +414,10 @@ class SessionManager:
                 # arrancar manual
                 self.active = True
                 self.start_ts = self._now()
-                self.phases = get_phases(self.class_id or get_default_class_id())
+                self.phases = self._get_phases_cached(self.class_id or get_default_class_id())
                 self.paused = False
                 self.pause_ts = None
                 self.pause_accum = 0
-            # Si hay una sesión activa, no se arranca (queda pendiente hasta que termines)
             return
 
         # Calendario semanal (no preemptivo; consume si coincide)
@@ -365,7 +429,7 @@ class SessionManager:
         self.active = True
         self.class_id = class_id
         self.start_ts = self._now()
-        self.phases = get_phases(class_id)
+        self.phases = self._get_phases_cached(class_id)
         self.scheduled_ts = None  # limpia programación puntual
         self.lead_s = 0
         self.paused = False
@@ -460,12 +524,12 @@ class SessionManager:
             delta = int(self.scheduled_ts - now)
             resp["countdown_s"] = max(0, delta)
             resp["show_countdown"] = (delta <= self.lead_s)
-            resp["total_dur_s"] = self._total_dur(get_phases(self.class_id or get_default_class_id()))
+            resp["total_dur_s"] = self._total_dur(self._get_phases_cached(self.class_id or get_default_class_id()))
             return resp
 
         # ====== COUNTDOWN PARA CALENDARIO SEMANAL ======
         if not self.active and self.scheduled_ts is None:
-            nxt = _next_weekly_occurrence(now)
+            nxt = self._next_weekly_occurrence(now)
             if nxt:
                 sched_id, epoch = nxt
                 delta = int(epoch - now)
@@ -478,13 +542,13 @@ class SessionManager:
                         "countdown_s": delta,
                         "next_class_id": planned_class,
                         "scheduled_ts": int(epoch),
-                        "total_dur_s": self._total_dur(get_phases(planned_class)),
+                        "total_dur_s": self._total_dur(self._get_phases_cached(planned_class)),
                     })
                     return resp
 
         # ====== SESIÓN ACTIVA ======
         if self.active:
-            phases = self.phases or get_phases(self.class_id or get_default_class_id())
+            phases = self.phases or self._get_phases_cached(self.class_id or get_default_class_id())
             elapsed, total, idx, phase_elapsed, phase_rem, phase = self._progress(phases, self.start_ts, now)
             if idx is None:
                 self.stop()
@@ -517,6 +581,7 @@ class SessionManager:
             cur = con.cursor()
             cur.execute("INSERT INTO weekly_schedule(dow,time_str) VALUES(?,?)", (dow, time_str))
             con.commit()
+            self._invalidate_weekly_cache()
             return cur.lastrowid
 
     def update_schedule(self, sched_id: int, time_str: Optional[str] = None, dow: Optional[int] = None):
@@ -530,11 +595,13 @@ class SessionManager:
             else:
                 con.execute("UPDATE weekly_schedule SET dow=? WHERE sched_id=?", (dow, sched_id))
             con.commit()
+            self._invalidate_weekly_cache()
 
     def delete_schedule(self, sched_id: int):
         with _connect() as con:
             con.execute("DELETE FROM weekly_schedule WHERE sched_id=?", (sched_id,))
             con.commit()
+            self._invalidate_weekly_cache()
 
     def replace_schedule(self, items: List[Dict[str, Any]]):
         norm = []
@@ -552,6 +619,7 @@ class SessionManager:
             cur.executemany("INSERT INTO weekly_schedule(dow,time_str) VALUES(?,?)",
                             [(x["dow"], x["time_str"]) for x in sorted(norm, key=lambda a:(a["dow"], a["time_str"]))])
             con.commit()
+            self._invalidate_weekly_cache()
 
     # One-off puntual por **día**
     def list_oneoff(self) -> List[Dict[str, Any]]:
@@ -566,11 +634,13 @@ class SessionManager:
                 "INSERT INTO one_off_schedule(ymd,class_id) VALUES(?,?) ON CONFLICT(ymd) DO UPDATE SET class_id=excluded.class_id",
                 (ymd, class_id))
             con.commit()
+            self._invalidate_weekly_cache()
 
     def delete_oneoff(self, ymd: str):
         with _connect() as con:
             con.execute("DELETE FROM one_off_schedule WHERE ymd=?", (ymd,))
             con.commit()
+            self._invalidate_weekly_cache()
 
 
 # Instancia global para usar desde el servidor

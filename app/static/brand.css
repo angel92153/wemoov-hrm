@@ -1,14 +1,14 @@
 /* ========= Brand CSS (negro, blanco, morado) ========= */
-/* Tipografías: Inter para texto / Space Grotesk para headings y datos */
+/* Tipografías: Montserrat para texto / Stretch Pro para headings y datos */
 @font-face{
-  font-family:"Inter";
-  src:local("Inter"), url("/static/fonts/Inter-Variable.woff2") format("woff2-variations");
+  font-family:"Montserrat";
+  src:local("Montserrat Thin"), url("/static/fonts/Montserrat-Thin.ttf") format("truetype");
   font-display:swap; font-weight:100 900;
 }
 @font-face{
-  font-family:"Space Grotesk";
-  src:local("Space Grotesk"), url("/static/fonts/SpaceGrotesk-Variable.woff2") format("woff2-variations");
-  font-display:swap; font-weight:300 800;
+  font-family:"Stretch Pro";
+  src:local("Stretch Pro"), url("/static/fonts/StretchPro.otf") format("opentype");
+  font-display:swap; font-weight:400 800;
 }
 
 :root{
@@ -23,13 +23,13 @@
   --danger:#ef4444;       /* rojo para acciones destructivas */
   --ok:#22c55e;           /* verde para estados ok */
 
-  /* Shadows y radios */
+  /* Sombras y radios */
   --shadow-lg: 0 8px 30px rgba(0,0,0,.35);
   --radius: 14px;
 
   /* Tipografías */
-  --ff-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
-  --ff-head: "Space Grotesk", var(--ff-ui);
+  --ff-ui: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --ff-head: "Stretch Pro", var(--ff-ui);
 
   /* Tallas */
   --fs-h1: clamp(1.25rem, 2.6vw, 2rem);
@@ -43,8 +43,8 @@
 
 /* Reset mínimo */
 *{ box-sizing:border-box; }
-html,body{ height:100%; }
-html{ background:var(--bg); color:var(--text); }
+html,body{ height:100%; margin:0; padding:0; }
+html{ background:var(--bg); color:var(--text); font-family:var(--ff-ui); }
 body{
   margin:0; padding:var(--page-pad);
   font-family:var(--ff-ui);
@@ -52,16 +52,17 @@ body{
   line-height:1.45;
 }
 
-/* Contenedor */
+/* Contenedor general */
 .wrap{ max-width:var(--wrap-w); margin:0 auto; }
 
 /* Títulos */
-h1{
-  margin:0 0 12px;
+h1,h2,h3,h4,h5,h6{
   font-family:var(--ff-head);
-  font-weight:800; letter-spacing:.3px;
-  font-size:var(--fs-h1);
+  font-weight:800;
+  letter-spacing:.3px;
+  color:var(--text);
 }
+h1{ font-size:var(--fs-h1); margin-bottom:12px; }
 
 /* Toolbar */
 .toolbar{
@@ -73,6 +74,7 @@ h1{
   border-radius:12px; padding:10px 14px; font-weight:700; cursor:pointer;
   text-decoration:none; display:inline-flex; align-items:center; gap:8px;
   transition: border-color .2s ease, transform .06s ease;
+  font-family:var(--ff-ui);
 }
 .btn:hover{ border-color:var(--accent); }
 .btn:active{ transform: translateY(1px); }
@@ -81,12 +83,13 @@ h1{
 .btn-danger{ background:var(--danger); color:#fff; border-color:transparent; }
 .btn:disabled{ opacity:.6; cursor:not-allowed; }
 
+/* Filtros tipo toggle */
 .filters{
   display:inline-flex; gap:0; border:1px solid var(--border); border-radius:12px; overflow:hidden;
 }
 .filters button{
   border:none; background:transparent; color:var(--text);
-  padding:10px 12px; font-weight:800; cursor:pointer;
+  padding:10px 12px; font-weight:800; cursor:pointer; font-family:var(--ff-ui);
 }
 .filters button + button{ border-left:1px solid var(--border); }
 .filters button.active{ background:var(--accent); color:#0b0615; }
@@ -99,7 +102,7 @@ h1{
 
 /* Tabla responsive */
 .table-wrap{ overflow:auto; border-radius:var(--radius); }
-table{ width:100%; border-collapse:collapse; min-width:780px; }
+table{ width:100%; border-collapse:collapse; min-width:780px; font-family:var(--ff-ui); }
 th,td{
   padding:12px; text-align:center; border-bottom:1px solid var(--border);
   font-size:14px;
@@ -117,13 +120,13 @@ tr.sim{ background: rgba(139,92,246,0.06); }
   display:inline-flex; align-items:center; gap:6px;
   padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800;
   background:#1c1433; color:var(--accent); border:1px solid #2a1e4d; margin-left:8px;
+  font-family:var(--ff-ui);
 }
-/* Variantes de badge para HRmax */
 .badge-auto{
   background:#171236; border-color:#2a1e4d; color:var(--accent);
 }
 .badge-manual{
-  background:#162a1c; border-color:#254a34; color:#34d399; /* verde */
+  background:#162a1c; border-color:#254a34; color:#34d399;
 }
 .badge-pill{ padding:2px 8px; border-radius:999px; font-size:12px; font-weight:800; }
 .badge-inline{ margin-left:8px; }
@@ -132,7 +135,7 @@ tr.sim{ background: rgba(139,92,246,0.06); }
   box-shadow: 0 0 8px rgba(139,92,246, .7);
 }
 
-/* Formulario */
+/* Formularios */
 form.grid{
   max-width:780px; display:grid; grid-template-columns:1fr; gap:12px 16px;
 }
@@ -142,7 +145,7 @@ form.grid{
 label{ font-weight:700; font-size:.95rem; font-family:var(--ff-head); }
 input, select{
   width:100%; padding:12px; border:1px solid var(--border); border-radius:10px;
-  background:#0f0f0f; color:var(--text); font-size:1rem;
+  background:#0f0f0f; color:var(--text); font-size:1rem; font-family:var(--ff-ui);
 }
 input::placeholder{ color:#6b7280; }
 .form-help{ color:var(--muted); font-size:var(--fs-small); margin-top:6px; }

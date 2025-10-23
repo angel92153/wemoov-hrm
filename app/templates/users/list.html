@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Usuarios HRM</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/static/brand.css">
+</head>
+<body>
+  <div class="wrap">
+    <h1>👤 Usuarios HRM</h1>
+
+    <!-- Barra de herramientas -->
+    <div class="toolbar">
+      <a class="btn btn-accent" href="{{ url_for('users.add') }}">➕ Añadir usuario</a>
+
+      <div class="filters" role="group" aria-label="Filtro">
+        <button type="button" class="active" data-filter="all" id="btn-all">Todos (0)</button>
+        <button type="button" data-filter="real" id="btn-real">Reales (0)</button>
+        <button type="button" data-filter="sim" id="btn-sim">Simulados (0)</button>
+      </div>
+    </div>
+
+    <!-- Tabla -->
+    <div class="panel card-pad table-wrap">
+      <table id="tab">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Nombre / Apodo</th>
+            <th>Edad</th>
+            <th>Peso</th>
+            <th>Sexo</th>
+            <th>ID</th>
+            <th>FCR</th>
+            <th>FCMáx</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          {% set edad_disp = (u.dob|age_from_dob) or u.edad %}
+          {% set hrmax_disp = u.hr_max if u.hr_max else ((u.dob|tanaka_dob) or (u.edad|tanaka)) %}
+          <tr class="{{ 'sim' if u.is_sim else '' }}" data-is-sim="{{ 1 if u.is_sim else 0 }}">
+            <td>{{ u.id }}</td>
+            <td>
+              {{ u.nombre }} {{ u.apellido }}
+              {% if u.apodo %}
+                <span class="muted">· {{ u.apodo }}</span>
+              {% endif %}
+              {% if u.is_sim %}
+                <span class="badge" title="Usuario simulado">
+                  <span class="dot"></span> Simulado
+                </span>
+              {% endif %}
+            </td>
+            <td class="{{ 'muted' if not edad_disp }}">{{ edad_disp or '—' }}</td>
+            <td class="{{ 'muted' if not u.peso }}">{{ u.peso or '—' }}</td>
+            <td class="{{ 'muted' if not u.sexo }}">{{ u.sexo or '—' }}</td>
+            <td class="{{ 'muted' if not u.device_id }}">{{ u.device_id or '—' }}</td>
+            <td class="{{ 'muted' if not u.hr_rest }}">{{ u.hr_rest or '—' }}</td>
+
+            <!-- FC Máx + badge Auto/Manual -->
+            <td class="{{ 'muted' if not hrmax_disp }}">
+              {{ hrmax_disp or '—' }}
+              {% if hrmax_disp %}
+                {% if u.hr_max_auto == 1 %}
+                  <span class="badge badge-pill badge-inline badge-auto"
+                        title="Calculada automáticamente (Tanaka)">Auto</span>
+                {% else %}
+                  <span class="badge badge-pill badge-inline badge-manual"
+                        title="Valor manual (no se ajusta con la edad)">Manual</span>
+                {% endif %}
+              {% endif %}
+            </td>
+
+            <td>
+              <a class="btn btn-ghost" href="{{ url_for('users.edit', user_id=u.id) }}">✏️ Editar</a>
+              <a class="btn btn-danger"
+                 href="{{ url_for('users.delete', user_id=u.id) }}"
+                 onclick="return confirm('¿Borrar usuario &quot;{{ u.apodo or u.nombre }}&quot;?')">
+                 🗑️ Borrar
+              </a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const rows = Array.from(document.querySelectorAll('tbody tr'));
+      const btns = Array.from(document.querySelectorAll('.filters button'));
+      const btnAll  = document.getElementById('btn-all');
+      const btnReal = document.getElementById('btn-real');
+      const btnSim  = document.getElementById('btn-sim');
+
+      function counts(){
+        const total = rows.length;
+        const sim = rows.filter(r => r.dataset.isSim === "1").length;
+        const real = total - sim;
+        return { total, real, sim };
+      }
+
+      function paintCounts(){
+        const { total, real, sim } = counts();
+        btnAll.textContent  = `Todos (${total})`;
+        btnReal.textContent = `Reales (${real})`;
+        btnSim.textContent  = `Simulados (${sim})`;
+      }
+
+      function setFilter(mode){
+        rows.forEach(tr => {
+          const isSim = tr.dataset.isSim === "1";
+          let show = true;
+          if (mode === 'real') show = !isSim;
+          else if (mode === 'sim') show = isSim;
+          tr.style.display = show ? '' : 'none';
+        });
+        btns.forEach(b => b.classList.toggle('active', b.dataset.filter === mode));
+      }
+
+      btns.forEach(b => b.addEventListener('click', () => setFilter(b.dataset.filter)));
+
+      // Inicializar
+      paintCounts();
+      setFilter('all');
+    })();
+  </script>
+</body>
+</html>

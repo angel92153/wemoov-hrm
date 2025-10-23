@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{{ 'Editar usuario' if user else 'Añadir usuario' }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/brand.css">
+  <style>
+  .switch { display:flex; align-items:center; gap:10px; margin-top:6px; }
+  .switch input[type="checkbox"]{ width:18px; height:18px; cursor:pointer; }
+  .muted-small{ color:var(--muted); font-size: var(--fs-small); }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{{ 'Editar usuario' if user else 'Añadir usuario' }}</h1>
+
+    <div class="panel card-pad">
+      <form method="post" action="" class="grid">
+
+        <div>
+          <label>Nombre</label>
+          <input name="nombre" value="{{ user.nombre if user else '' }}" required>
+        </div>
+
+        <div>
+          <label>Apellido</label>
+          <input name="apellido" value="{{ user.apellido if user else '' }}" required>
+        </div>
+
+        <div>
+          <label>Apodo</label>
+          <input name="apodo" value="{{ user.apodo if user else '' }}" required>
+        </div>
+
+        <div>
+          <label>Sexo</label>
+          {% set s = (user.sexo if user else 'M') or 'M' %}
+          <select name="sexo" required>
+            <option value="M" {{ 'selected' if s == 'M' else '' }}>M</option>
+            <option value="F" {{ 'selected' if s == 'F' else '' }}>F</option>
+          </select>
+        </div>
+
+        <div>
+          <label>Fecha de nacimiento</label>
+          <input type="date" name="dob" value="{{ user.dob if user and user.dob else '' }}" required>
+          {% if user and user.dob %}
+            <div class="form-help">Edad detectada: {{ user.dob|age_from_dob or '—' }}</div>
+          {% endif %}
+        </div>
+
+        <div>
+          <label>Peso (kg)</label>
+          <input type="number" step="0.1" name="peso" min="1" max="500"
+                 value="{{ user.peso if user and user.peso else '' }}" required>
+        </div>
+
+        <div>
+        <label>Device ID</label>
+        <!-- Un solo cuadro: input + datalist -->
+        <input id="device_id" type="number" name="device_id"
+              list="freeDevices"
+              value="{{ user.device_id if user and user.device_id else '' }}"
+              placeholder="Escribe un ID o elige de la lista">
+        <datalist id="freeDevices">
+          <!-- Se rellena por JS -->
+          <option value="">— Cargando… —</option>
+        </datalist>
+
+        <div class="form-help">Ponte la banda y elige de la lista, o escribe el ID manualmente.</div>
+        <div class="muted-small" id="freeInfo" style="margin-top:6px;"></div>
+      </div>
+
+
+        <div>
+          <label>FC Reposo</label>
+          <input type="number" name="hr_rest" min="30" max="120"
+                 value="{{ user.hr_rest if user and user.hr_rest else '' }}">
+        </div>
+
+        <!-- FC Máx + modo auto/manual -->
+        {% set auto = (user.hr_max_auto == 1) if user else true %}
+        {% set hrmax_disp = (user.hr_max if user and user.hr_max else ((user.dob|tanaka_dob) or (user.edad|tanaka))) %}
+        <div>
+          <label>FC Máx</label>
+          <div class="switch">
+            <input type="checkbox" id="hrmax_auto" name="hr_max_auto" {{ 'checked' if auto else '' }}>
+            <label for="hrmax_auto" class="muted">Calcular automáticamente</label>
+          </div>
+          <input type="number" id="hr_max" name="hr_max" min="120" max="230"
+                 value="{{ '' if auto else (hrmax_disp or '') }}"
+                 placeholder="{{ auto and (hrmax_disp or '') }}"
+                 {{ 'disabled' if auto else '' }}>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="btn btn-accent">{{ 'Guardar cambios' if user else 'Crear usuario' }}</button>
+          <a href="{{ url_for('users.index') }}" class="btn">Volver</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+  // ========== FC Máx auto/manual (sin cambios) ==========
+  const chkAuto = document.getElementById('hrmax_auto');
+  const inpHrMx = document.getElementById('hr_max');
+  chkAuto.addEventListener('change', () => {
+    const on = chkAuto.checked;
+    inpHrMx.disabled = on;
+    if (on) inpHrMx.value = '';
+  });
+
+  // ========== Pulsómetros libres con <datalist> ==========
+  const inputDev  = document.getElementById('device_id');
+  const dataList  = document.getElementById('freeDevices');
+  const freeInfo  = document.getElementById('freeInfo');
+
+  function fmtTime(ts){
+    try{
+      const d = new Date(ts*1000);
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      const ss = String(d.getSeconds()).padStart(2,'0');
+      return `${hh}:${mm}:${ss}`;
+    }catch{ return ''; }
+  }
+
+  const RECENT_S   = 45;
+  const POLL_MS    = 5000;
+  const TIMEOUT_MS = 6000;
+  let pollTimer = null;
+
+  async function loadFree(){
+    const ctl = new AbortController();
+    const t   = setTimeout(() => ctl.abort(), TIMEOUT_MS);
+    try{
+      const res = await fetch(`/api/unassigned_devices?recent=${RECENT_S}`, { cache:'no-store', signal: ctl.signal });
+      const data = await res.json();
+      const list = (data && Array.isArray(data.devices)) ? data.devices : [];
+
+      // Limpia y rellena <datalist>
+      dataList.innerHTML = '';
+      if (!list.length){
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '— No hay pulsómetros libres ahora —';
+        dataList.appendChild(opt);
+        freeInfo.textContent = 'Si ya te has puesto la banda, espera unos segundos.';
+      }else{
+        // Opción informativa inicial (no seleccionable de facto)
+        const opt0 = document.createElement('option');
+        opt0.value = '';
+        opt0.textContent = '— Elige un pulsómetro libre —';
+        dataList.appendChild(opt0);
+
+        // Rellenar: value = ID (para que se copie al input); label visible en el desplegable
+        list.forEach(d => {
+          const opt = document.createElement('option');
+          opt.value = String(d.dev); // esto es lo que se copia al input al elegir
+          opt.label = `ID ${d.dev} · HR ${d.hr ?? '--'} · ${fmtTime(d.ts)}`;
+          dataList.appendChild(opt);
+        });
+        freeInfo.textContent = `Actualizado: ${new Date().toLocaleTimeString()}`;
+      }
+    }catch(e){
+      dataList.innerHTML = '';
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '(Error cargando lista)';
+      dataList.appendChild(opt);
+      freeInfo.textContent = 'No se pudo obtener la lista de libres.';
+    }finally{
+      clearTimeout(t);
+    }
+  }
+
+  function schedule(){
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(() => { if (!document.hidden) loadFree(); }, POLL_MS);
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) loadFree();
+  });
+
+  // Init
+  loadFree();
+  schedule();
+
+  // (opcional) fuerza que el input siga siendo numérico
+  inputDev.addEventListener('input', () => {
+    const v = inputDev.value.trim();
+    if (v && !/^\d+$/.test(v)) inputDev.value = v.replace(/\D+/g, '');
+  });
+</script>
+</body>
+</html>

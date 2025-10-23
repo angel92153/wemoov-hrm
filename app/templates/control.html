@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/static/brand.css">
   <style>
+    /* Layout mínimo específico de esta vista; lo demás viene de brand.css */
     .wrap-narrow{ max-width: 760px; margin: 0 auto; }
     .center{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-height:70vh; text-align:center; }
     .timer{
@@ -16,34 +17,34 @@
     }
     .timer.phase{ color: var(--text); }
     .timer.countdown{ color: #ffffff; }
-    .phase-label{ font-size: clamp(14px, 2.4vw, 18px); color: var(--muted); }
+    .phase-label{ font-size: clamp(18px, 3vw, 36px); color: var(--muted); font-family: var(--ff-head);   /* usa Stretch Pro */ letter-spacing: 0.5px; text-transform: uppercase;
+}
+
     .controls{ display:flex; gap:18px; align-items:center; justify-content:center; }
+
+    /* Controles circulares play/prev/next, mantienen look propio */
     .ctrl{
-      appearance:none; border:none; background:transparent; color:var(--text); cursor:pointer;
+      appearance:none; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer;
       width:72px; height:72px; border-radius:50%;
       display:flex; align-items:center; justify-content:center; font-size:34px;
-      box-shadow: var(--shadow-lg); background: #151515; border:1px solid var(--border);
+      box-shadow: var(--shadow-lg);
       transition: transform .06s ease, border-color .2s;
     }
-    .ctrl:active{ transform: translateY(1px); }
     .ctrl:hover{ border-color: var(--accent); }
-    .pill{ padding:6px 10px; border:1px solid var(--border); border-radius:999px; color:var(--muted); font-size:13px; }
+    .ctrl:active{ transform: translateY(1px); }
+
     .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
 
-    /* Panel de selección de clase */
-    .panel{ background:var(--card); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow-lg); }
+    /* Panel superior */
     .panel-inner{ padding:16px; display:grid; grid-template-columns:1fr; gap:10px; }
     .form-row{ display:grid; grid-template-columns:1fr auto auto; gap:8px; }
-    select, button.btn{
-      padding:10px 12px; border-radius:10px; border:1px solid var(--border);
-      background:#0f0f0f; color:var(--text); font-family:var(--ff-ui); font-weight:700;
+
+    /* Select sigue la estética definida en brand.css */
+    select{
+      padding:10px 12px; border-radius:12px;
     }
-    button.btn{ background:linear-gradient(135deg,var(--accent),var(--accent-2)); color:#0b0615; border-color:transparent; cursor:pointer; }
-    button.btn:disabled{ opacity:.6; cursor:not-allowed; }
-    button.ghost{ background:#151515; color:var(--text); border:1px solid var(--border); }
 
     .status{ font-size:13px; color:var(--muted); text-align:center; min-height:1.4em; }
-    .glow{ box-shadow: 0 0 0 2px rgba(255,255,255,0.06), 0 0 34px rgba(255,255,255,0.12) inset; border-radius: 18px; padding:16px 24px; }
   </style>
 </head>
 <body>
@@ -56,8 +57,8 @@
         <select id="classSelect" aria-label="Selecciona una clase">
           <option value="">— Cargando clases… —</option>
         </select>
-        <button id="reloadClasses" class="ghost">Recargar</button>
-        <button id="startClass" class="btn">Iniciar clase</button>
+        <button id="startClass" class="btn btn-accent">Iniciar</button>
+        <button id="stopClass" class="btn btn-danger">Detener</button>
       </div>
       <div id="classStatus" class="status"></div>
     </div>
@@ -90,12 +91,12 @@ async function loadClasses(){
   const status = $('classStatus')
   try{
     status.textContent = 'Cargando clases…'
-    const r = await fetch('/session/classes', { cache:'no-store' })
-    const j = await r.json()
-    const list = Array.isArray(j.classes) ? j.classes : []
+    const r = await fetch('/sessions/classes', { cache:'no-store' })
+    const raw = await r.json()
+    // admite array directo o {classes: [...]}
+    const list = Array.isArray(raw) ? raw : (Array.isArray(raw.classes) ? raw.classes : [])
 
-    // Normalizamos posibles formatos: {id/ key/ class_id, label/ name/ title}
-    const rows = list.map(c => {
+    const rows = (Array.isArray(list) ? list : []).map(c => {
       const id = c.id ?? c.key ?? c.class_id ?? c.slug ?? c.name ?? c.label
       const label = c.label ?? c.name ?? c.title ?? String(id)
       return id ? { id: String(id), label: String(label) } : null
@@ -114,7 +115,7 @@ async function loadClasses(){
     rows.forEach(({id,label}) => {
       const opt = document.createElement('option')
       opt.value = id
-      opt.textContent = label
+      opt.textContent = label           // <- solo el nombre (sin duración)
       frag.appendChild(opt)
     })
     sel.appendChild(frag)
@@ -124,8 +125,6 @@ async function loadClasses(){
     $('classStatus').textContent = 'No se pudieron cargar las clases.'
   }
 }
-
-$('reloadClasses').onclick = loadClasses
 
 $('startClass').onclick = async () => {
   const sel = $('classSelect')
@@ -138,7 +137,7 @@ $('startClass').onclick = async () => {
   try{
     $('startClass').disabled = true
     status.textContent = 'Iniciando clase…'
-    const r = await fetch('/session/start', {
+    const r = await fetch('/sessions/start', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ class_id: cid })
@@ -146,8 +145,7 @@ $('startClass').onclick = async () => {
     const j = await r.json()
     if (j && j.ok){
       status.textContent = 'Clase iniciada.'
-      // Forzar un poll inmediato para reflejar estado
-      poll()
+      await poll()
     }else{
       status.textContent = 'No se pudo iniciar la clase.'
     }
@@ -158,10 +156,25 @@ $('startClass').onclick = async () => {
   }
 }
 
+$('stopClass').onclick = async () => {
+  const status = $('classStatus')
+  try{
+    const r = await fetch('/sessions/stop', { method:'POST' })
+    if (r.ok){
+      status.textContent = 'Sesión detenida.'
+      await poll()
+    }else{
+      status.textContent = 'No se pudo detener la sesión.'
+    }
+  }catch(e){
+    status.textContent = 'Error deteniendo la sesión.'
+  }
+}
+
 /* ==================== POLL DE ESTADO ==================== */
 async function poll(){
   try{
-    const r = await fetch('/session/status', { cache:'no-store' })
+    const r = await fetch('/sessions/status', { cache:'no-store' })
     const j = await r.json()
     const t = $('timer'), info = $('info'), controls = $('controls'), hint = $('hint')
 
@@ -182,6 +195,7 @@ async function poll(){
       t.style.color = phaseColor
       t.textContent = fmt(j.phase_remaining_s ?? 0)
       info.textContent = (j.phase_key || 'Fase') + (j.paused ? ' · PAUSA' : '')
+      info.style.color = phaseColor
       controls.style.display = ''
       hint.innerHTML = ''
       return
@@ -192,6 +206,7 @@ async function poll(){
     t.style.color = ''
     t.textContent = '--:--'
     info.textContent = 'Sin sesión'
+    info.style.color = 'var(--muted)'  // 🔧 restaurar color neutro
     controls.style.display = 'none'
     hint.innerHTML = ''
   }catch(e){
@@ -200,14 +215,19 @@ async function poll(){
 }
 
 /* ==================== CONTROLES ==================== */
-$('prev').onclick   = ()=> fetch('/session/prev', {method:'POST'})
-$('next').onclick   = ()=> fetch('/session/next', {method:'POST'})
-$('toggle').onclick = ()=> fetch('/session/toggle_pause', {method:'POST'})
+$('prev').onclick   = async ()=>{ await fetch('/sessions/prev',        {method:'POST'}); await poll(); }
+$('next').onclick   = async ()=>{ await fetch('/sessions/next',        {method:'POST'}); await poll(); }
+$('toggle').onclick = async ()=>{ await fetch('/sessions/toggle_pause',{method:'POST'}); await poll(); }
 
 /* ==================== INIT ==================== */
 setInterval(poll, 1000)
 loadClasses()
 poll()
+
+// (Opcional) refrescar el selector al volver a la pestaña:
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) loadClasses();
+});
 </script>
 </body>
 </html>
