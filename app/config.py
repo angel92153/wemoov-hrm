@@ -6,4 +6,4 @@ class Config:
     SESSIONS_DB_PATH = os.environ.get("SESSIONS_DB_PATH", "sessions.db")
     HR_PROVIDER = os.environ.get("HR_PROVIDER", "sim")  # "sim" o "real"
     HR_CACHE_TTL = int(os.environ.get("HR_CACHE_TTL", "1"))  # si luego cacheamos lecturas
-    HR_PROVIDER = "sim"
+    HR_PROVIDER = "real"

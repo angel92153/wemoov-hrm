@@ -7,7 +7,7 @@ try:
     from app.services.hrm.real import RealHRProvider  # type: ignore
 except Exception:
     class RealHRProvider(SimHRProvider):
-        # fallback en dev
+        # fallback en dev (mantiene interfaz)
         def read_current_by_device(self, device_id: int):
             return self.read_current(device_id)
 
@@ -20,20 +20,13 @@ log = logging.getLogger(__name__)
 def _provider():
     prov = current_app.config.get("_HR_PROVIDER_SINGLETON")
     if prov is None:
-        mode = current_app.config.get("HR_PROVIDER", "sim").lower()
+        mode = (current_app.config.get("HR_PROVIDER", "sim") or "sim").lower()
         prov = RealHRProvider() if mode == "real" else SimHRProvider()
         current_app.config["_HR_PROVIDER_SINGLETON"] = prov
     return prov
 
-# -------------------------
-# DEMO map (en memoria)
-# -------------------------
-def _demo_map():
-    m = current_app.config.get("_DEMO_MAP")
-    if m is None:
-        m = {}
-        current_app.config["_DEMO_MAP"] = m
-    return m
+def _mode_is_real() -> bool:
+    return (current_app.config.get("HR_PROVIDER", "sim") or "sim").lower() == "real"
 
 # -------------------------
 # HR helpers
@@ -67,6 +60,84 @@ def _zone_from_bpm(bpm: int, hr_max: int) -> str:
     if p < 0.90: return "Z4"
     return "Z5"
 
+def _to_ms(ts):
+    """Convierte timestamps en segundos a milisegundos si hace falta."""
+    if not isinstance(ts, (int, float)):
+        return None
+    return int(ts * 1000) if ts < 10_000_000_000 else int(ts)
+
+def _is_fresh(ts_ms, now_ms, recent_ms) -> bool:
+    """Comprueba frescura en ms; si no hay ts, no filtramos por frescura."""
+    if not isinstance(ts_ms, (int, float)):
+        return True
+    try:
+        return (now_ms - int(ts_ms)) <= int(recent_ms)
+    except Exception:
+        return True
+
+def _read_entry_for_user(u: dict, prov, now_ms: int, recent_ms: int):
+    """
+    Devuelve {'bpm': int, 'ts_ms': int|None} si el usuario debe mostrarse,
+    o None si NO debe mostrarse.
+
+    Reglas:
+    - Si el proveedor global es SIM (HR_PROVIDER != 'real'): TODOS los usuarios se leen del sim.
+    - Si el proveedor global es REAL:
+        * Usuarios con is_sim==1 -> sim (bpm>0).
+        * Resto -> real: requiere device_id, bpm>0 y frescura.
+    """
+    uid = int(u["id"])
+    device_id = u.get("device_id")
+    is_user_sim = int(u.get("is_sim") or 0) == 1
+
+    # ¿Estamos en modo SIM global?
+    if not _mode_is_real():
+        # SIM para todos
+        try:
+            r = prov.read_current(uid)
+            if not isinstance(r, dict): return None
+            bpm = int(r.get("bpm") or 0)
+            if bpm <= 0:
+                return None
+            ts_ms = _to_ms(r.get("ts"))
+            return {"bpm": bpm, "ts_ms": ts_ms}
+        except Exception:
+            return None
+
+    # MODO REAL global:
+    # 1) Usuarios marcados como simulados -> sim
+    if is_user_sim:
+        try:
+            r = prov.read_current(uid)
+            if not isinstance(r, dict): return None
+            bpm = int(r.get("bpm") or 0)
+            if bpm <= 0:
+                return None
+            ts_ms = _to_ms(r.get("ts"))
+            return {"bpm": bpm, "ts_ms": ts_ms}
+        except Exception:
+            return None
+
+    # 2) Usuarios reales -> real estricto
+    if device_id is None:
+        return None
+    if not hasattr(prov, "read_current_by_device"):
+        return None
+    try:
+        r = prov.read_current_by_device(int(device_id))
+    except Exception:
+        return None
+    if not isinstance(r, dict):
+        return None
+    bpm = int(r.get("bpm") or 0)
+    if bpm <= 0:
+        return None
+    ts_ms = _to_ms(r.get("ts"))
+    recent_ms_conf = int(current_app.config.get("LIVE_RECENT_MS", 5000))  # por si se llama fuera
+    if not _is_fresh(ts_ms, now_ms, recent_ms_conf):
+        return None
+    return {"bpm": bpm, "ts_ms": ts_ms}
+
 # -------------------------
 # /live (polling)
 # -------------------------
@@ -80,7 +151,9 @@ def live():
     users_db = current_app.config["USERS_DB_PATH"]
     users_repo = UsersRepo(users_db)
     prov = _provider()
-    dem = _demo_map()
+
+    # Configurable: ventana de frescura en ms (solo aplica a lecturas reales)
+    recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))  # 5s por defecto
 
     try:
         users = users_repo.list(limit=limit)
@@ -95,30 +168,15 @@ def live():
         apodo = (u.get("apodo") or f"{u.get('nombre','') or ''} {u.get('apellido','') or ''}".strip() or f"ID {uid}").strip()
         hr_max_eff = _hr_max_effective(u, fallback=190)
 
-        # 1) DEMO tiene prioridad si existe
-        demo_dev = dem.get(uid)
-        if demo_dev is not None:
-            if hasattr(prov, "read_current_by_device"):
-                r = prov.read_current_by_device(int(demo_dev))
-            else:
-                r = prov.read_current(int(demo_dev))
-        else:
-            # 2) Caso normal (real/sim)
-            device_id = u.get("device_id")
-            is_sim = int(u.get("is_sim") or 0) == 1
-            if is_sim:
-                r = prov.read_current(uid)
-            else:
-                if hasattr(prov, "read_current_by_device") and device_id is not None:
-                    r = prov.read_current_by_device(int(device_id))
-                else:
-                    r = prov.read_current(uid)
+        reading = _read_entry_for_user(u, prov, now_ms, recent_ms)
+        if reading is None:
+            continue
 
-        bpm = int(r["bpm"])
+        bpm = int(reading["bpm"])
         out.append({
-            "dev": uid,  # mantenemos 'dev' (tu front ya lo usa)
+            "dev": uid,  # el front usa 'dev' como id
             "hr": bpm,
-            "ts": now_ms,
+            "ts": now_ms,  # reloj del servidor (opcional: podrías usar reading['ts_ms'])
             "user": {"apodo": apodo},
             "metrics": {"hr_max": hr_max_eff, "zone": _zone_from_bpm(bpm, hr_max_eff)}
         })
@@ -148,11 +206,19 @@ def live_stream():
     users_repo = UsersRepo(current_app.config["USERS_DB_PATH"])
     prov = _provider()
 
+    recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))
+
     def gen():
         try:
             while True:
-                users = users_repo.list(limit=limit)
-                dem = _demo_map()
+                try:
+                    users = users_repo.list(limit=limit)
+                except Exception as e:
+                    log.exception("live_stream db error: %s", e)
+                    yield "data: []\n\n"
+                    time.sleep(1)
+                    continue
+
                 now_ms = int(time.time() * 1000)
                 out = []
 
@@ -161,24 +227,11 @@ def live_stream():
                     apodo = (u.get("apodo") or f"{u.get('nombre','') or ''} {u.get('apellido','') or ''}".strip() or f"ID {uid}").strip()
                     hr_max_eff = _hr_max_effective(u, fallback=190)
 
-                    demo_dev = dem.get(uid)
-                    if demo_dev is not None:
-                        if hasattr(prov, "read_current_by_device"):
-                            r = prov.read_current_by_device(int(demo_dev))
-                        else:
-                            r = prov.read_current(int(demo_dev))
-                    else:
-                        device_id = u.get("device_id")
-                        is_sim = int(u.get("is_sim") or 0) == 1
-                        if is_sim:
-                            r = prov.read_current(uid)
-                        else:
-                            if hasattr(prov, "read_current_by_device") and device_id is not None:
-                                r = prov.read_current_by_device(int(device_id))
-                            else:
-                                r = prov.read_current(uid)
+                    reading = _read_entry_for_user(u, prov, now_ms, recent_ms)
+                    if reading is None:
+                        continue
 
-                    bpm = int(r["bpm"])
+                    bpm = int(reading["bpm"])
                     out.append({
                         "dev": uid,
                         "hr": bpm,
@@ -190,11 +243,9 @@ def live_stream():
                 yield f"data: {json.dumps(out, separators=(',',':'))}\n\n"
                 time.sleep(1)
         except GeneratorExit:
-            # cliente cerró la conexión
             return
         except Exception as e:
             log.exception("live_stream error: %s", e)
-            # opcional: enviar un evento de error
             try:
                 yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
             except Exception:
@@ -218,42 +269,3 @@ def live_health():
         return jsonify({"ok": True, "users_count": n, "users_db": users_db_abs})
     except Exception as e:
         return jsonify({"ok": False, "error": str(e), "users_db": users_db_abs}), 500
-
-# --- Pulsómetros libres (no asignados a ningún usuario) ---
-@bp.get("/api/unassigned_devices")
-def api_unassigned_devices():
-    """
-    Devuelve dispositivos ANT+ vistos en los últimos `recent` segundos
-    y que NO están asignados a ningún usuario.
-    Salida: {"devices":[{"dev":int,"hr":int|null,"ts":epoch},...]}
-    """
-    try:
-        recent = int(request.args.get("recent", "45"))
-    except ValueError:
-        recent = 45
-
-    users_repo = UsersRepo(current_app.config["USERS_DB_PATH"])
-    prov = _provider()
-
-    # 1) Dispositivos vistos recientemente por el provider real
-    try:
-        seen = prov.recent_devices(recent=recent)  # [{"dev", "hr", "ts"}, ...]
-    except Exception as e:
-        return jsonify({"error": "provider_error", "message": str(e)}), 500
-
-    # 2) Conjunto de device_id ya asignados a usuarios
-    try:
-        assigned = { int(u["device_id"]) for u in users_repo.list(limit=1_000_000)
-                     if u.get("device_id") is not None }
-    except Exception as e:
-        return jsonify({"error": "db_error", "message": str(e)}), 500
-
-    # 3) Filtra -> libres
-    out = [ d for d in seen if int(d["dev"]) not in assigned ]
-
-    # Orden descendente por ts (más reciente primero)
-    out.sort(key=lambda x: x["ts"], reverse=True)
-
-    resp = jsonify({"devices": out, "recent": recent})
-    resp.cache_control.no_store = True
-    return resp
