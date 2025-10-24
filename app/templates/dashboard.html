@@ -167,6 +167,13 @@
       ? Math.max(0, Math.min(100, Math.floor((hr*100)/hrmax))) : null;
 
     function layoutForCount(n){
+      if (n <= 0){
+        // Sin layout explícito → la grid queda vacía y el fondo se ve negro
+        grid.style.gridTemplateColumns = '';
+        grid.style.gridTemplateRows = '';
+        grid.style.justifyContent = 'center';
+        return;
+      }
       let cols=4, rows=1;
       if (n<=4){ cols=Math.max(1,n); rows=1; }
       else if (n<=8){ cols=4; rows=2; }
@@ -239,43 +246,40 @@
     }
 
     function reconcile(list){
-      const now = Date.now();
-      const arr = Array.isArray(list) ? list : [];
-      const presentIds = new Set(arr.map(d => d.dev));
+    const now = Date.now();
+    const arr = Array.isArray(list) ? list : [];
+    const presentIds = new Set(arr.map(d => d.dev));
 
-      // crear/actualizar
-      arr.forEach(d => {
-        let entry = cards.get(d.dev);
-        if (!entry){
-          const el = buildCard(d);
-          cards.set(d.dev, { el, fadeStart: null });
-          grid.append(el);
-        }else{
-          updateCardContent(entry.el, d);
-          if (entry.fadeStart !== null){ entry.fadeStart = null; entry.el.style.opacity = '1'; }
-        }
-      });
-
-      // desvanecer desaparecidos
-      for (const [dev, entry] of Array.from(cards.entries())){
-        if (!presentIds.has(dev)){
-          if (entry.fadeStart == null){ entry.fadeStart = now; const hrEl = entry.el.querySelector(`#hr-${dev}`); if (hrEl) hrEl.classList.remove('bump'); }
-          const p = Math.min(1, (now - entry.fadeStart) / FADE_DURATION_MS);
-          entry.el.style.opacity = String(1 - p);
-          if (p >= 1){ try { grid.removeChild(entry.el); } catch {} cards.delete(dev); lastTs.delete(dev); lastBeatAt.delete(dev); }
-        }
+    // crear/actualizar
+    arr.forEach(d => {
+      let entry = cards.get(d.dev);
+      if (!entry){
+        const el = buildCard(d);
+        cards.set(d.dev, { el, fadeStart: null });
+        grid.append(el);
+      }else{
+        updateCardContent(entry.el, d);
+        if (entry.fadeStart !== null){ entry.fadeStart = null; entry.el.style.opacity = '1'; }
       }
+    });
 
-      const count = cards.size;
-      if (emptyMsgEl) { try { grid.removeChild(emptyMsgEl); } catch {} emptyMsgEl = null; }
-      if (count === 0){
-        emptyMsgEl = document.createElement('div'); emptyMsgEl.className='empty'; emptyMsgEl.textContent='Sin dispositivos activos…'; grid.append(emptyMsgEl);
+    // desvanecer desaparecidos
+    for (const [dev, entry] of Array.from(cards.entries())){
+      if (!presentIds.has(dev)){
+        if (entry.fadeStart == null){ entry.fadeStart = now; const hrEl = entry.el.querySelector(`#hr-${dev}`); if (hrEl) hrEl.classList.remove('bump'); }
+        const p = Math.min(1, (now - entry.fadeStart) / FADE_DURATION_MS);
+        entry.el.style.opacity = String(1 - p);
+        if (p >= 1){ try { grid.removeChild(entry.el); } catch {} cards.delete(dev); lastTs.delete(dev); lastBeatAt.delete(dev); }
       }
-      layoutForCount(count);
-
-      // guardar ts (sin latir)
-      arr.forEach(d=>{ const ts=d.ts||'', prev=lastTs.get(d.dev); if (ts && ts!==prev) lastTs.set(d.dev, ts); });
     }
+
+    // QUITAMOS el placeholder: no creamos nada cuando count===0
+    const count = cards.size;
+    layoutForCount(count);
+
+    // guardar ts (sin latir)
+    arr.forEach(d=>{ const ts=d.ts||'', prev=lastTs.get(d.dev); if (ts && ts!==prev) lastTs.set(d.dev, ts); });
+  }
 
     function bumpHR(devId){
       const entry = cards.get(devId);

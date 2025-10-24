@@ -1,11 +1,14 @@
-from datetime import datetime, timezone
+# app/services/metrics.py
+from __future__ import annotations
+from datetime import datetime, date, timezone
 from typing import Optional, Tuple
 
-# ==================== PARÁMETROS ====================
-KCAL_MODE = "net"  # "net" = activas | "gross" = totales (activas + basal)
-MET_REST = 1.0  # 1 MET por defecto; puedes sobrescribirlo desde config si quieres
-
-# ====================================================
+# ==================== PARÁMETROS GLOBALES ====================
+# "net"  = kcal activas (Keytel ajustado por intensidad)
+# "gross"= kcal totales (activas + basal ~ MET_REST * peso / 60)
+KCAL_MODE = "gross"
+MET_REST  = 1.0
+# =============================================================
 
 # Zonas por %HRR (Karvonen)
 HRR_Z1 = 0.50  # <50% HRR
@@ -21,28 +24,52 @@ HMX_Z3 = 0.80  # 70–79%
 HMX_Z4 = 0.90  # 80–89%
 # Z5 ≥90% HRmax
 
-# Moov points (misma forma, distinto umbral de inicio por método)
+# Moov points
 MOOV_ALPHA = 4.0
 MOOV_BETA  = 2.5
 MOOV_MIN_HRR = 0.50  # empieza a puntuar ≥50% HRR
 MOOV_MIN_HMX = 0.60  # empieza a puntuar ≥60% HRmax
 
-# Ajuste de Keytel por intensidad (bandas según método)
+# Ajustes energéticos por intensidad (modo "mixed")
 MIXED_ADJ_Z5 = 1.20
 MIXED_ADJ_Z4 = 1.10
 MIXED_ADJ_REC_HRR = 0.90  # <50% HRR
 MIXED_ADJ_REC_HMX = 0.90  # <60% HRmax
 STRENGTH_ADJ = 1.30
-# ====================================================
 
 
+# -------------------- Utilidades tiempo/edad --------------------
 def _parse_ts(ts_iso: str | None):
+    """ISO (con o sin Z) → datetime UTC | None."""
     if not ts_iso:
         return None
     try:
         return datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).astimezone(timezone.utc)
     except Exception:
         return None
+
+def _age_from_dob_iso(dob: Optional[str]) -> Optional[int]:
+    """'YYYY-MM-DD' → edad en años (entera) o None si inválido."""
+    if not dob:
+        return None
+    try:
+        y, m, d = map(int, dob.split("-"))
+        b = date(y, m, d)
+        today = date.today()
+        years = today.year - b.year - ((today.month, today.day) < (b.month, b.day))
+        return max(0, years)
+    except Exception:
+        return None
+
+def _edad_from_user(user: Optional[dict]) -> Optional[int]:
+    """Prioriza edad derivada de dob; si no hay dob válido, usa user['edad'] si existe."""
+    if not user:
+        return None
+    e_dob = _age_from_dob_iso(user.get("dob"))
+    if isinstance(e_dob, int):
+        return e_dob
+    e = user.get("edad")
+    return int(e) if isinstance(e, int) and e >= 0 else None
 
 
 # -------------------- HRmax --------------------
@@ -51,7 +78,6 @@ def hrmax_estimada(edad: int | None) -> int:
     if isinstance(edad, int) and edad > 0:
         return int(round(208 - 0.7 * edad))
     return 190
-
 
 def hrmax_from_user_or_estimada(edad: Optional[int], hrmax_user: Optional[int]) -> int:
     """Usa hr_max del perfil si es válido; si no, Tanaka."""
@@ -120,7 +146,6 @@ def kcal_per_min_keytel(hr: int, edad: int | None, peso_kg: float | None, sexo: 
     else:
         return (-55.0969 + 0.6309 * hr + 0.1988 * peso + 0.2017 * edad) / 4.184
 
-
 def kcal_adjustment_factor(frac: float, method: str, mode: str) -> float:
     """Ajuste por modo/intensidad. Umbrales cambian según el método."""
     m = (mode or "cardio").lower()
@@ -141,33 +166,6 @@ def kcal_adjustment_factor(frac: float, method: str, mode: str) -> float:
         if frac < HMX_Z1:   return MIXED_ADJ_REC_HMX
         return 1.0
 
-
-def kcal_per_min_adjusted(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None,
-                          frac: float, method: str, mode: str = "mixed") -> float:
-    base = kcal_per_min_keytel(hr, edad, peso_kg, sexo)
-    adj = kcal_adjustment_factor(frac, method, mode)
-    return max(0.0, base * adj)
-
-
-def kcal_per_min_total(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None,
-                       frac: float, method: str, mode: str = "mixed") -> float:
-    """Calorías totales = activas (Keytel ajustado) + basal (MET)."""
-    active = kcal_per_min_adjusted(hr, edad, peso_kg, sexo, frac, method, mode)
-    if KCAL_MODE == "gross":
-        basal = basal_kcal_per_min(edad, peso_kg, sexo, MET_REST)
-        return max(0.0, active + basal)
-    return active
-
-
-
-# -------------------- Moov points --------------------
-def moov_rate_per_min_from_frac(frac: float, method: str) -> float:
-    """Tasa de puntos/min."""
-    thr = MOOV_MIN_HRR if method == "hrr" else MOOV_MIN_HMX
-    if frac < thr:
-        return 0.0
-    return MOOV_ALPHA * (frac ** MOOV_BETA)
-
 def basal_kcal_per_min(edad: int | None, peso_kg: float | None, sexo: str | None,
                        met_rest: float = MET_REST) -> float:
     """
@@ -181,6 +179,29 @@ def basal_kcal_per_min(edad: int | None, peso_kg: float | None, sexo: str | None
         peso, met = 70.0, 1.0
     return max(0.0, met * peso / 60.0)
 
+def kcal_per_min_adjusted(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None,
+                          frac: float, method: str, mode: str = "mixed") -> float:
+    base = kcal_per_min_keytel(hr, edad, peso_kg, sexo)
+    adj = kcal_adjustment_factor(frac, method, mode)
+    return max(0.0, base * adj)
+
+def kcal_per_min_total(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None,
+                       frac: float, method: str, mode: str = "mixed") -> float:
+    """Calorías totales = activas (Keytel ajustado) + basal (MET), si KCAL_MODE == 'gross'."""
+    active = kcal_per_min_adjusted(hr, edad, peso_kg, sexo, frac, method, mode)
+    if KCAL_MODE == "gross":
+        basal = basal_kcal_per_min(edad, peso_kg, sexo, MET_REST)
+        return max(0.0, active + basal)
+    return active
+
+
+# -------------------- Moov points --------------------
+def moov_rate_per_min_from_frac(frac: float, method: str) -> float:
+    """Tasa de puntos/min."""
+    thr = MOOV_MIN_HRR if method == "hrr" else MOOV_MIN_HMX
+    if frac < thr:
+        return 0.0
+    return MOOV_ALPHA * (frac ** MOOV_BETA)
 
 
 # -------------------- Sesión --------------------
@@ -191,16 +212,17 @@ class _Sess:
         self.kcal_total = 0.0
         self.moov_total = 0.0
 
-
 class SessionStore:
     """
-    Híbrido:
-      - Usa Karvonen (%HRR) SI el perfil trae hr_rest válido.
-      - Si no, %HRmax.
-    Ajustes energéticos y puntos se adaptan al método activo.
+    Integrador por dispositivo/usuario.
+      - Método de intensidad:
+          * Karvonen (%HRR) si user['hr_rest'] es válido (30..100)
+          * si no, %HRmax.
+      - Kcal: Keytel ajustado por intensidad (+ basal si KCAL_MODE='gross').
+      - Puntos: función potencia a partir de fracción de intensidad.
     """
     def __init__(self):
-        self._by_dev = {}
+        self._by_dev: dict[int, _Sess] = {}
 
     def clear(self, dev_id: int | None = None):
         if dev_id is None:
@@ -210,8 +232,15 @@ class SessionStore:
 
     def update(self, dev_id: int, user: dict | None, hr: int | None, ts_iso: str | None,
                mode: str = "mixed"):
-        """Actualiza acumulados (kcal/puntos) según HR."""
-        edad = user.get("edad") if user else None
+        """
+        user esperado (si existe): {
+            "dob": "YYYY-MM-DD", "edad": int (opcional/fallback),
+            "peso": float, "sexo": "M"/"F",
+            "hr_max": int?, "hr_rest": int?
+        }
+        """
+        # Edad: prioriza DOB
+        edad = _edad_from_user(user)
         hr_max_user = user.get("hr_max") if user else None
         hr_max = hrmax_from_user_or_estimada(edad, hr_max_user)
 
@@ -248,9 +277,8 @@ class SessionStore:
 
         return {
             "hr_max": hr_max,
-            "method": method,
+            "method": method,   # "hrr" o "hrmax"
             "zone": zcode,
             "kcal": round(sess.kcal_total, 3),
             "moov_points": round(sess.moov_total, 3),
         }
-

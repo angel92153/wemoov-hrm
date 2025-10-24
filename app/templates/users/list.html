@@ -6,19 +6,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/static/brand.css">
   <style>
-    .toolbar{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
-    .filters button{ margin:0 2px; }
-    .sim-ctrl{ display:flex; align-items:center; gap:8px; }
-    .sim-ctrl input[type="number"]{ width:96px; }
-    .muted{ opacity:.8; font-size:.9em; }
-    .status-msg{ min-height: 1.2em; }
-    .badge{ display:inline-flex; align-items:center; gap:6px; padding:2px 8px; border-radius:999px; background:#1f2937; color:#fff; font-size:.8em; }
-    .badge .dot{ width:8px; height:8px; border-radius:50%; background:#10b981; display:inline-block; }
-    .badge-inline{ margin-left:6px; }
-    .badge-auto{ background:#334155; }
-    .badge-manual{ background:#7c3aed; }
-    .btn[disabled]{ opacity:.6; pointer-events:none; }
-    .table-wrap{ overflow:auto; }
+    .inline-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+    .muted{opacity:.7}
+    .saved-badge{font-size:.9em;color:var(--accent,#22c55e);opacity:0;transition:opacity .2s ease}
+    .saved-badge.show{opacity:1}
+    .filters button.active{background:var(--accent,#22c55e);color:#fff}
+    .badge{display:inline-flex;align-items:center;gap:6px;padding:.15rem .45rem;border-radius:999px;background:#2a2f43;color:#cbd5e1;font-size:.75rem}
+    .badge .dot{width:.55em;height:.55em;border-radius:50%;background:#8b5cf6}
+    .badge-auto{background:#1f2937}
+    .badge-manual{background:#3b1f1f}
+    .badge-inline{margin-left:.35rem}
   </style>
 </head>
 <body>
@@ -26,21 +23,20 @@
     <h1>👤 Usuarios HRM</h1>
 
     <!-- Barra de herramientas -->
-    <div class="toolbar">
-      <a class="btn btn-accent" href="{{ url_for('users.add') }}">➕ Añadir usuario</a>
+    <div class="toolbar" style="gap:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap">
+      <div class="inline-controls">
+        <a class="btn btn-accent" href="{{ url_for('users.add') }}">➕ Añadir usuario</a>
+
+        <!-- Control "Simulados: N" (auto-guardar) -->
+        <label class="muted" for="simCount">Simulados:</label>
+        <input id="simCount" type="number" min="0" step="1" value="{{ sim_count or 0 }}" style="width:90px">
+        <span id="saved" class="saved-badge">✓ Guardado</span>
+      </div>
 
       <div class="filters" role="group" aria-label="Filtro">
         <button type="button" class="active" data-filter="all" id="btn-all">Todos (0)</button>
         <button type="button" data-filter="real" id="btn-real">Reales (0)</button>
         <button type="button" data-filter="sim" id="btn-sim">Simulados (0)</button>
-      </div>
-
-      <!-- Control de simulados -->
-      <div class="sim-ctrl" style="margin-left:auto">
-        <label for="simCount"><strong>Simulados:</strong></label>
-        <input id="simCount" type="number" min="0" step="1" value="{{ sim_count or 0 }}" />
-        <button id="applySim" class="btn">Aplicar</button>
-        <span id="simStatus" class="muted status-msg"></span>
       </div>
     </div>
 
@@ -114,6 +110,7 @@
 
   <script>
     (function(){
+      // ------- filtros + contadores ------
       const rows = Array.from(document.querySelectorAll('tbody tr'));
       const btns = Array.from(document.querySelectorAll('.filters button'));
       const btnAll  = document.getElementById('btn-all');
@@ -126,14 +123,12 @@
         const real = total - sim;
         return { total, real, sim };
       }
-
       function paintCounts(){
         const { total, real, sim } = counts();
         btnAll.textContent  = `Todos (${total})`;
         btnReal.textContent = `Reales (${real})`;
         btnSim.textContent  = `Simulados (${sim})`;
       }
-
       function setFilter(mode){
         rows.forEach(tr => {
           const isSim = tr.dataset.isSim === "1";
@@ -144,57 +139,39 @@
         });
         btns.forEach(b => b.classList.toggle('active', b.dataset.filter === mode));
       }
-
       btns.forEach(b => b.addEventListener('click', () => setFilter(b.dataset.filter)));
+      paintCounts(); setFilter('all');
 
-      // Inicializar
-      paintCounts();
-      setFilter('all');
-    })();
+      // ------- simulados: auto-guardar sin botón ------
+      const inp = document.getElementById('simCount');
+      const saved = document.getElementById('saved');
+      let timer = null;
 
-    // ===== Control de simulados =====
-    (function(){
-      const input  = document.getElementById('simCount');
-      const apply  = document.getElementById('applySim');
-      const status = document.getElementById('simStatus');
+      function showSaved(){
+        saved.classList.add('show');
+        setTimeout(() => saved.classList.remove('show'), 1000);
+      }
 
-      let debTimer = null;
-
-      async function postCount(n){
+      async function applySimCount(n){
         try{
-          apply.disabled = true;
-          status.textContent = 'Aplicando…';
           const res = await fetch('/users/simulated', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ count: n })
+            method:'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({count: Number(n)})
           });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok || !data.ok){
-            throw new Error(data.error || 'Error aplicando cambios');
-          }
-          status.textContent = 'Hecho ✓';
-          // Recarga para refrescar tabla y contadores
-          setTimeout(() => { window.location.reload(); }, 300);
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || 'error');
+          showSaved();
+          // recargamos para reflejar altas/bajas
+          location.reload();
         }catch(e){
-          status.textContent = 'Error: ' + (e.message || e);
-          apply.disabled = false;
+          alert('No se pudo ajustar el número de simulados.');
         }
       }
 
-      // Click explícito
-      apply.addEventListener('click', () => {
-        const n = Math.max(0, parseInt(input.value || '0', 10));
-        postCount(n);
-      });
-
-      // También con debounce al escribir
-      input.addEventListener('input', () => {
-        if (debTimer) clearTimeout(debTimer);
-        debTimer = setTimeout(() => {
-          const n = Math.max(0, parseInt(input.value || '0', 10));
-          postCount(n);
-        }, 600);
+      inp.addEventListener('input', () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => applySimCount(inp.value || 0), 300);
       });
     })();
   </script>

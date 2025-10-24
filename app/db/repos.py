@@ -8,9 +8,10 @@ from typing import Any, Dict, List, Optional
 
 class UsersRepo:
     """
-    Repositorio simple para la tabla 'users'.
-    - No aplica migraciones (eso lo hace app.db.users_init).
-    - Valida campos obligatorios en create().
+    Repositorio simple para la tabla 'users' SIN columna 'edad'.
+    Columnas esperadas (orden recomendado):
+      id, nombre, apellido, apodo, sexo, dob, peso,
+      device_id, hr_rest, hr_max, hr_max_auto, is_sim
     """
 
     def __init__(self, db_path: str):
@@ -20,6 +21,7 @@ class UsersRepo:
     def _conn(self):
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         try:
+            conn.row_factory = sqlite3.Row
             yield conn
             conn.commit()
         finally:
@@ -29,81 +31,71 @@ class UsersRepo:
     # Helpers
     # ---------------------------
     @staticmethod
-    def _row_to_dict(r: sqlite3.Row | tuple) -> Dict[str, Any]:
+    def _row_to_dict(r: sqlite3.Row) -> Dict[str, Any]:
+        # Mapea por nombre de columna (más robusto que por índice)
         return {
-            "id":          r[0],
-            "nombre":      r[1],
-            "apellido":    r[2],
-            "apodo":       r[3],
-            "edad":        r[4],
-            "peso":        r[5],
-            "device_id":   r[6],
-            "sexo":        r[7],
-            "hr_rest":     r[8],
-            "hr_max":      r[9],
-            "is_sim":      r[10],
-            "dob":         r[11],
-            "hr_max_auto": r[12],
+            "id":          r["id"],
+            "nombre":      r["nombre"],
+            "apellido":    r["apellido"],
+            "apodo":       r["apodo"],
+            "sexo":        r["sexo"],
+            "dob":         r["dob"],
+            "peso":        r["peso"],
+            "device_id":   r["device_id"],
+            "hr_rest":     r["hr_rest"],
+            "hr_max":      r["hr_max"],
+            "hr_max_auto": r["hr_max_auto"],
+            "is_sim":      r["is_sim"],
         }
 
     # ---------------------------
     # CRUD
     # ---------------------------
     def list(self, limit: int = 1000) -> List[Dict[str, Any]]:
+        sql = """
+            SELECT id, nombre, apellido, apodo, sexo, dob, peso,
+                   device_id, hr_rest, hr_max, hr_max_auto, is_sim
+            FROM users
+            ORDER BY id DESC
+            LIMIT ?
+        """
         with self._conn() as c:
-            c.row_factory = sqlite3.Row
-            cur = c.cursor()
-            cur.execute(
-                """
-                SELECT id, nombre, apellido, apodo, edad, peso, device_id, sexo,
-                       hr_rest, hr_max, is_sim, dob, hr_max_auto
-                FROM users
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (int(limit),),
-            )
-            rows = cur.fetchall()
+            rows = c.execute(sql, (int(limit),)).fetchall()
             return [self._row_to_dict(r) for r in rows]
 
     def get(self, user_id: int) -> Optional[Dict[str, Any]]:
+        sql = """
+            SELECT id, nombre, apellido, apodo, sexo, dob, peso,
+                   device_id, hr_rest, hr_max, hr_max_auto, is_sim
+            FROM users
+            WHERE id = ?
+        """
         with self._conn() as c:
-            c.row_factory = sqlite3.Row
-            cur = c.cursor()
-            cur.execute(
-                """
-                SELECT id, nombre, apellido, apodo, edad, peso, device_id, sexo,
-                       hr_rest, hr_max, is_sim, dob, hr_max_auto
-                FROM users
-                WHERE id=?
-                """,
-                (int(user_id),),
-            )
-            r = cur.fetchone
-            r = cur.fetchone()
+            r = c.execute(sql, (int(user_id),)).fetchone()
             return self._row_to_dict(r) if r else None
 
     def create(
         self,
+        *,
         nombre: str,
         apellido: str,
-        apodo: Optional[str] = None,
-        sexo: Optional[str] = None,
-        dob: Optional[str] = None,        # 'YYYY-MM-DD'
-        peso: Optional[float] = None,
+        apodo: str,
+        sexo: str,
+        dob: str,                 # 'YYYY-MM-DD'
+        peso: float,
         device_id: Optional[int] = None,
         hr_rest: Optional[int] = None,
         hr_max: Optional[int] = None,
-        hr_max_auto: int = 1,             # 1=auto, 0=manual
+        hr_max_auto: int = 1,     # 1=auto, 0=manual
         is_sim: int = 0,
-        edad: Optional[int] = None,       # legacy opcional
     ) -> int:
         # -------- Validaciones obligatorias --------
         nombre = (nombre or "").strip()
         apellido = (apellido or "").strip()
         apodo = (apodo or "").strip()
-        sexo = (sexo or "").strip().upper() if sexo else ""
+        sexo = (sexo or "").strip().upper()
         dob = (dob or "").strip()
+
         if not nombre:
             raise ValueError("El campo 'nombre' es obligatorio.")
         if not apellido:
@@ -114,8 +106,7 @@ class UsersRepo:
             raise ValueError("El campo 'sexo' es obligatorio y debe ser 'M' o 'F'.")
         if not dob:
             raise ValueError("El campo 'dob' (fecha de nacimiento) es obligatorio (YYYY-MM-DD).")
-        if peso is None or str(peso).strip() == "":
-            raise ValueError("El campo 'peso' es obligatorio.")
+
         try:
             peso_f = float(peso)
             if peso_f <= 0:
@@ -124,56 +115,38 @@ class UsersRepo:
             raise ValueError("El campo 'peso' debe ser un número positivo.")
 
         # Normalizaciones
-        edad_i = int(edad) if (edad is not None and str(edad).strip() != "") else None
         device_i = int(device_id) if (device_id is not None and str(device_id).strip() != "") else None
         hr_rest_i = int(hr_rest) if (hr_rest is not None and str(hr_rest).strip() != "") else None
         hr_max_auto_i = 1 if int(hr_max_auto) != 0 else 0
-        # Si hr_max_auto == 1, forzamos hr_max a NULL. Si == 0, intentamos guardar hr_max si viene.
-        if hr_max_auto_i == 1:
-            hr_max_i = None
-        else:
-            hr_max_i = int(hr_max) if (hr_max is not None and str(hr_max).strip() != "") else None
+        hr_max_i = None if hr_max_auto_i == 1 else (int(hr_max) if (hr_max is not None and str(hr_max).strip() != "") else None)
 
+        sql = """
+            INSERT INTO users
+              (nombre, apellido, apodo, sexo, dob, peso,
+               device_id, hr_rest, hr_max, hr_max_auto, is_sim)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
         with self._conn() as c:
-            cur = c.cursor()
-            cur.execute(
-                """
-                INSERT INTO users
-                  (nombre, apellido, apodo, edad, peso, device_id, sexo,
-                   hr_rest, hr_max, is_sim, dob, hr_max_auto)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    nombre,
-                    apellido,
-                    apodo,
-                    edad_i,
-                    peso_f,
-                    device_i,
-                    sexo,
-                    hr_rest_i,
-                    hr_max_i,
-                    int(is_sim) if is_sim is not None else 0,
-                    dob,
-                    hr_max_auto_i,
-                ),
-            )
-            return cur.lastrowid
+            cur = c.execute(sql, (
+                nombre, apellido, apodo, sexo, dob, peso_f,
+                device_i, hr_rest_i, hr_max_i, hr_max_auto_i, int(is_sim) if is_sim is not None else 0
+            ))
+            return int(cur.lastrowid)
 
     def update(self, user_id: int, **fields) -> Dict[str, Any]:
         """
         Actualiza campos permitidos. Devuelve el usuario resultante.
-        Nota: en update no exigimos obligatorios; solo normalizamos si llegan.
         """
         allowed = {
-            "nombre", "apellido", "apodo", "edad", "peso", "device_id", "sexo",
-            "hr_rest", "hr_max", "is_sim", "dob", "hr_max_auto"
+            "nombre", "apellido", "apodo", "sexo", "dob", "peso",
+            "device_id", "hr_rest", "hr_max", "hr_max_auto", "is_sim"
         }
+
         sets, vals = [], []
         for k, v in fields.items():
             if k not in allowed:
                 continue
-            if k in ("edad", "device_id", "hr_rest", "hr_max", "hr_max_auto", "is_sim"):
+            if k in ("device_id", "hr_rest", "hr_max", "hr_max_auto", "is_sim"):
                 v = (int(v) if v is not None and v != "" else None)
             elif k == "peso":
                 v = (float(v) if v is not None and v != "" else None)
@@ -185,16 +158,20 @@ class UsersRepo:
                     raise ValueError("El campo 'sexo' debe ser 'M' o 'F'.")
             elif k in ("nombre", "apellido", "apodo", "dob"):
                 v = (v.strip() if isinstance(v, str) else v)
+
             sets.append(f"{k}=?")
             vals.append(v)
 
         if sets:
+            sql = f"UPDATE users SET {', '.join(sets)} WHERE id=?"
             with self._conn() as c:
-                c.execute(
-                    f"UPDATE users SET {', '.join(sets)} WHERE id=?",
-                    (*vals, int(user_id)),
-                )
-        return self.get(user_id)  # type: ignore
+                c.execute(sql, (*vals, int(user_id)))
+
+        # Devuelve el usuario final
+        got = self.get(user_id)
+        if not got:
+            raise ValueError("Usuario no encontrado tras actualizar.")
+        return got
 
     def delete(self, user_id: int) -> None:
         with self._conn() as c:
