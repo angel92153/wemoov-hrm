@@ -2,6 +2,11 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 # ==================== PARÁMETROS ====================
+KCAL_MODE = "net"  # "net" = activas | "gross" = totales (activas + basal)
+MET_REST = 1.0  # 1 MET por defecto; puedes sobrescribirlo desde config si quieres
+
+# ====================================================
+
 # Zonas por %HRR (Karvonen)
 HRR_Z1 = 0.50  # <50% HRR
 HRR_Z2 = 0.60  # 50–59%
@@ -117,9 +122,7 @@ def kcal_per_min_keytel(hr: int, edad: int | None, peso_kg: float | None, sexo: 
 
 
 def kcal_adjustment_factor(frac: float, method: str, mode: str) -> float:
-    """
-    Ajuste por modo/intensidad. Umbrales cambian según el método.
-    """
+    """Ajuste por modo/intensidad. Umbrales cambian según el método."""
     m = (mode or "cardio").lower()
     if m == "cardio":
         return 1.0
@@ -128,20 +131,14 @@ def kcal_adjustment_factor(frac: float, method: str, mode: str) -> float:
 
     # mixed
     if method == "hrr":
-        if frac >= HRR_Z5:  # ≥90% HRR
-            return MIXED_ADJ_Z5
-        if frac >= HRR_Z4:  # 80–89% HRR
-            return MIXED_ADJ_Z4
-        if frac < HRR_Z1:   # <50% HRR
-            return MIXED_ADJ_REC_HRR
+        if frac >= HRR_Z5:  return MIXED_ADJ_Z5
+        if frac >= HRR_Z4:  return MIXED_ADJ_Z4
+        if frac < HRR_Z1:   return MIXED_ADJ_REC_HRR
         return 1.0
     else:
-        if frac >= HMX_Z4:  # ≥90% HRmax
-            return MIXED_ADJ_Z5
-        if frac >= HMX_Z3:  # 80–89% HRmax
-            return MIXED_ADJ_Z4
-        if frac < HMX_Z1:   # <60% HRmax
-            return MIXED_ADJ_REC_HMX
+        if frac >= HMX_Z4:  return MIXED_ADJ_Z5
+        if frac >= HMX_Z3:  return MIXED_ADJ_Z4
+        if frac < HMX_Z1:   return MIXED_ADJ_REC_HMX
         return 1.0
 
 
@@ -152,17 +149,38 @@ def kcal_per_min_adjusted(hr: int, edad: int | None, peso_kg: float | None, sexo
     return max(0.0, base * adj)
 
 
+def kcal_per_min_total(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None,
+                       frac: float, method: str, mode: str = "mixed") -> float:
+    """Calorías totales = activas (Keytel ajustado) + basal (MET)."""
+    active = kcal_per_min_adjusted(hr, edad, peso_kg, sexo, frac, method, mode)
+    if KCAL_MODE == "gross":
+        basal = basal_kcal_per_min(edad, peso_kg, sexo, MET_REST)
+        return max(0.0, active + basal)
+    return active
+
+
+
 # -------------------- Moov points --------------------
 def moov_rate_per_min_from_frac(frac: float, method: str) -> float:
-    """
-    Tasa de puntos/min:
-      - HRR: arranca a 50%
-      - HRmax: arranca a 60%
-    """
+    """Tasa de puntos/min."""
     thr = MOOV_MIN_HRR if method == "hrr" else MOOV_MIN_HMX
     if frac < thr:
         return 0.0
     return MOOV_ALPHA * (frac ** MOOV_BETA)
+
+def basal_kcal_per_min(edad: int | None, peso_kg: float | None, sexo: str | None,
+                       met_rest: float = MET_REST) -> float:
+    """
+    Basal por minuto usando MET: ~1.0 kcal/kg/h en reposo ⇒ met * peso / 60.
+    (Evita usar Keytel(hr=0) porque puede ser negativo.)
+    """
+    try:
+        peso = float(peso_kg) if (isinstance(peso_kg, (int, float)) and peso_kg > 0) else 70.0
+        met = float(met_rest) if met_rest and met_rest > 0 else 1.0
+    except Exception:
+        peso, met = 70.0, 1.0
+    return max(0.0, met * peso / 60.0)
+
 
 
 # -------------------- Sesión --------------------
@@ -192,24 +210,15 @@ class SessionStore:
 
     def update(self, dev_id: int, user: dict | None, hr: int | None, ts_iso: str | None,
                mode: str = "mixed"):
-        """
-        user esperado (si existe): {"edad": int, "peso": float, "sexo": "M"/"F",
-                                    "hr_max": int?, "hr_rest": int?}
-        """
+        """Actualiza acumulados (kcal/puntos) según HR."""
         edad = user.get("edad") if user else None
         hr_max_user = user.get("hr_max") if user else None
         hr_max = hrmax_from_user_or_estimada(edad, hr_max_user)
 
-        method, hr_rest = pick_method(user)  # "hrr" usa hr_rest del perfil; si no, "hrmax"
+        method, hr_rest = pick_method(user)
 
         if dev_id is None:
-            return {
-                "hr_max": hr_max,
-                "method": method,
-                "zone": "Z1",
-                "kcal": 0.0,
-                "moov_points": 0.0,
-            }
+            return {"hr_max": hr_max, "method": method, "zone": "Z1", "kcal": 0.0, "moov_points": 0.0}
 
         sess = self._by_dev.get(dev_id)
         if sess is None:
@@ -220,19 +229,16 @@ class SessionStore:
         peso = user.get("peso") if user else None
         sexo = user.get("sexo") if user else None
 
-        # Fracción de intensidad y zona
-        if method == "hrr":
-            frac = frac_hrr(hr, hr_max, hr_rest)  # type: ignore[arg-type]
-        else:
-            frac = frac_hrmax(hr, hr_max)
+        # Fracción y zona
+        frac = frac_hrr(hr, hr_max, hr_rest) if method == "hrr" else frac_hrmax(hr, hr_max)
         zcode = zone_code_from_frac(frac, method)
 
         # Integración temporal
-        if ts and (hr is not None):
+        if ts and hr is not None:
             if sess.last_ts:
                 dt_min = max(0.0, (ts - sess.last_ts).total_seconds() / 60.0)
                 if dt_min > 0.0:
-                    rate_kcal = kcal_per_min_adjusted(hr, edad, peso, sexo, frac, method, mode=mode)
+                    rate_kcal = kcal_per_min_total(hr, edad, peso, sexo, frac, method, mode)
                     if rate_kcal > 0:
                         sess.kcal_total += rate_kcal * dt_min
                     rate_mp = moov_rate_per_min_from_frac(frac, method)
@@ -242,9 +248,9 @@ class SessionStore:
 
         return {
             "hr_max": hr_max,
-            "method": method,   # "hrr" o "hrmax" (útil para UI/log)
+            "method": method,
             "zone": zcode,
             "kcal": round(sess.kcal_total, 3),
             "moov_points": round(sess.moov_total, 3),
-            # "h_frac": round(frac, 4),  # descomenta si quieres depurar
         }
+

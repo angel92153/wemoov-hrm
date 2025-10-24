@@ -1,8 +1,14 @@
 # app/routes/live.py
+from __future__ import annotations
 from flask import Blueprint, jsonify, request, current_app, make_response, Response, stream_with_context
 import time, os, logging, json, hashlib
+from datetime import datetime, timezone
 from app.db.repos import UsersRepo
 from app.services.hrm.sim import SimHRProvider
+from app.services.metrics import SessionStore  # kcal & moov points acumulados
+from app.services import metrics as MET
+
+
 try:
     from app.services.hrm.real import RealHRProvider  # type: ignore
 except Exception:
@@ -13,6 +19,9 @@ except Exception:
 
 bp = Blueprint("live", __name__)
 log = logging.getLogger(__name__)
+
+# Sesiones acumuladas (kcal / moov_points) por usuario (mismo id que 'dev' en el front)
+_sessions = SessionStore()
 
 # -------------------------
 # Helpers singleton provider
@@ -27,6 +36,39 @@ def _provider():
 
 def _mode_is_real() -> bool:
     return (current_app.config.get("HR_PROVIDER", "sim") or "sim").lower() == "real"
+
+def _class_is_active() -> bool:
+    """
+    Reutiliza la MISMA señal que usa tu /session/status.
+    Prioridades:
+      1) SESSION_ACTIVE_FN -> callable que devuelve bool
+      2) _SESSION_ACTIVE   -> bool en config (tu /session/status puede mantenerlo)
+      3) CLASS_ACTIVE      -> bool en config
+      4) SESSION.active    -> dict en config con clave 'active'
+      5) False
+    """
+    try:
+        fn = current_app.config.get("SESSION_ACTIVE_FN")
+        if callable(fn):
+            return bool(fn())
+    except Exception:
+        pass
+
+    for key in ("_SESSION_ACTIVE", "CLASS_ACTIVE"):
+        if key in current_app.config:
+            try:
+                return bool(current_app.config.get(key))
+            except Exception:
+                pass
+
+    sess_cfg = current_app.config.get("SESSION")
+    if isinstance(sess_cfg, dict) and "active" in sess_cfg:
+        try:
+            return bool(sess_cfg.get("active"))
+        except Exception:
+            pass
+
+    return False
 
 # -------------------------
 # HR helpers
@@ -51,15 +93,6 @@ def _hr_max_effective(u: dict, fallback: int = 190) -> int:
         return int(hr_max)
     return fallback
 
-def _zone_from_bpm(bpm: int, hr_max: int) -> str:
-    if hr_max <= 0: return "Z1"
-    p = bpm / hr_max
-    if p < 0.60: return "Z1"
-    if p < 0.70: return "Z2"
-    if p < 0.80: return "Z3"
-    if p < 0.90: return "Z4"
-    return "Z5"
-
 def _to_ms(ts):
     """Convierte timestamps en segundos a milisegundos si hace falta."""
     if not isinstance(ts, (int, float)):
@@ -75,14 +108,14 @@ def _is_fresh(ts_ms, now_ms, recent_ms) -> bool:
     except Exception:
         return True
 
-def _read_entry_for_user(u: dict, prov, now_ms: int, recent_ms: int):
+def _reading_for_user(u: dict, prov, now_ms: int, recent_ms: int):
     """
     Devuelve {'bpm': int, 'ts_ms': int|None} si el usuario debe mostrarse,
     o None si NO debe mostrarse.
 
     Reglas:
-    - Si el proveedor global es SIM (HR_PROVIDER != 'real'): TODOS los usuarios se leen del sim.
-    - Si el proveedor global es REAL:
+    - Modo SIM global (HR_PROVIDER != 'real'): TODOS los usuarios se leen del sim.
+    - Modo REAL:
         * Usuarios con is_sim==1 -> sim (bpm>0).
         * Resto -> real: requiere device_id, bpm>0 y frescura.
     """
@@ -90,35 +123,32 @@ def _read_entry_for_user(u: dict, prov, now_ms: int, recent_ms: int):
     device_id = u.get("device_id")
     is_user_sim = int(u.get("is_sim") or 0) == 1
 
-    # ¿Estamos en modo SIM global?
+    # SIM global → sim para todos
     if not _mode_is_real():
-        # SIM para todos
         try:
             r = prov.read_current(uid)
             if not isinstance(r, dict): return None
             bpm = int(r.get("bpm") or 0)
-            if bpm <= 0:
-                return None
+            if bpm <= 0: return None
             ts_ms = _to_ms(r.get("ts"))
             return {"bpm": bpm, "ts_ms": ts_ms}
         except Exception:
             return None
 
-    # MODO REAL global:
-    # 1) Usuarios marcados como simulados -> sim
+    # REAL global:
+    # Simulados marcados por usuario
     if is_user_sim:
         try:
             r = prov.read_current(uid)
             if not isinstance(r, dict): return None
             bpm = int(r.get("bpm") or 0)
-            if bpm <= 0:
-                return None
+            if bpm <= 0: return None
             ts_ms = _to_ms(r.get("ts"))
             return {"bpm": bpm, "ts_ms": ts_ms}
         except Exception:
             return None
 
-    # 2) Usuarios reales -> real estricto
+    # Reales estrictos
     if device_id is None:
         return None
     if not hasattr(prov, "read_current_by_device"):
@@ -133,14 +163,23 @@ def _read_entry_for_user(u: dict, prov, now_ms: int, recent_ms: int):
     if bpm <= 0:
         return None
     ts_ms = _to_ms(r.get("ts"))
-    recent_ms_conf = int(current_app.config.get("LIVE_RECENT_MS", 5000))  # por si se llama fuera
-    if not _is_fresh(ts_ms, now_ms, recent_ms_conf):
+    if not _is_fresh(ts_ms, now_ms, recent_ms):
         return None
     return {"bpm": bpm, "ts_ms": ts_ms}
+
+def _ts_ms_to_iso_utc(ts_ms: int | None, fallback_now_ms: int) -> str:
+    base_ms = ts_ms if isinstance(ts_ms, (int, float)) else fallback_now_ms
+    dt = datetime.utcfromtimestamp(int(base_ms) / 1000.0).replace(tzinfo=timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+def _now_iso_utc() -> str:
+    return datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+
 
 # -------------------------
 # /live (polling)
 # -------------------------
+# --- Dentro de /live ---
 @bp.get("/live")
 def live():
     try:
@@ -152,46 +191,74 @@ def live():
     users_repo = UsersRepo(users_db)
     prov = _provider()
 
-    # Configurable: ventana de frescura en ms (solo aplica a lecturas reales)
-    recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))  # 5s por defecto
+    recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))
+    mode_for_metrics = str(current_app.config.get("SESSION_MODE", "mixed"))
+    class_active = _class_is_active()
 
     try:
         users = users_repo.list(limit=limit)
     except Exception as e:
-        return jsonify({"error": "db_error", "message": str(e), "users_db": os.path.abspath(users_db)}), 500
+        return jsonify({"error": "db_error", "message": str(e)}), 500
 
     now_ms = int(time.time() * 1000)
     out = []
+    seen = set()
 
     for u in users:
         uid = int(u["id"])
-        apodo = (u.get("apodo") or f"{u.get('nombre','') or ''} {u.get('apellido','') or ''}".strip() or f"ID {uid}").strip()
-        hr_max_eff = _hr_max_effective(u, fallback=190)
+        seen.add(uid)
+        apodo = (u.get("apodo") or f"{u.get('nombre','')} {u.get('apellido','')}".strip() or f"ID {uid}").strip()
 
-        reading = _read_entry_for_user(u, prov, now_ms, recent_ms)
+        reading = _reading_for_user(u, prov, now_ms, recent_ms)
         if reading is None:
             continue
 
         bpm = int(reading["bpm"])
+        ts_ms = reading.get("ts_ms") or now_ms  # fallback si falta ts
+        ts_iso = _now_iso_utc()
+
+        MET.KCAL_MODE = current_app.config.get("KCAL_MODE", "net")
+        MET.MET_REST  = float(current_app.config.get("MET_REST", 1.0))
+
+        m = _sessions.update(
+            dev_id=uid,
+            user=u,
+            hr=bpm,
+            ts_iso=ts_iso,
+            mode=mode_for_metrics,
+        )
+
         out.append({
-            "dev": uid,  # el front usa 'dev' como id
+            "dev": uid,
             "hr": bpm,
-            "ts": now_ms,  # reloj del servidor (opcional: podrías usar reading['ts_ms'])
+            "ts": now_ms,
             "user": {"apodo": apodo},
-            "metrics": {"hr_max": hr_max_eff, "zone": _zone_from_bpm(bpm, hr_max_eff)}
+            "metrics": {
+                "hr_max": m["hr_max"],
+                "zone": m["zone"],
+                "kcal": m["kcal"],
+                "points": m["moov_points"],
+            },
         })
+
+    # --- limpieza diferida de sesiones antiguas ---
+    if not class_active:
+        GRACE_MS = 10_000  # espera 10 s antes de limpiar acumulados
+        for dev_id, sess in list(_sessions._by_dev.items()):
+            last = getattr(sess, "last_ts", None)
+            if last is not None:
+                dt = (datetime.now(timezone.utc) - last).total_seconds() * 1000
+                if dt > GRACE_MS and dev_id not in seen:
+                    _sessions.clear(dev_id)
 
     payload = json.dumps(out, separators=(',', ':')).encode("utf-8")
     etag = hashlib.md5(payload).hexdigest()
-    inm = request.headers.get("If-None-Match")
-    if inm and inm == etag:
-        resp = make_response("", 304)
-    else:
-        resp = make_response(payload, 200)
-        resp.mimetype = "application/json"
-        resp.set_etag(etag)
+    resp = make_response(payload, 200)
+    resp.mimetype = "application/json"
+    resp.set_etag(etag)
     resp.cache_control.no_store = True
     return resp
+
 
 # -------------------------
 # /live/stream (SSE)
@@ -207,6 +274,7 @@ def live_stream():
     prov = _provider()
 
     recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))
+    mode_for_metrics = str(current_app.config.get("SESSION_MODE", "mixed"))
 
     def gen():
         try:
@@ -219,25 +287,45 @@ def live_stream():
                     time.sleep(1)
                     continue
 
+                class_active = _class_is_active()
                 now_ms = int(time.time() * 1000)
                 out = []
 
                 for u in users:
                     uid = int(u["id"])
                     apodo = (u.get("apodo") or f"{u.get('nombre','') or ''} {u.get('apellido','') or ''}".strip() or f"ID {uid}").strip()
-                    hr_max_eff = _hr_max_effective(u, fallback=190)
 
-                    reading = _read_entry_for_user(u, prov, now_ms, recent_ms)
+                    reading = _reading_for_user(u, prov, now_ms, recent_ms)
                     if reading is None:
+                        if not class_active:
+                            _sessions.clear(uid)
                         continue
 
                     bpm = int(reading["bpm"])
+                    ts_iso = _now_iso_utc()
+
+                    MET.KCAL_MODE = current_app.config.get("KCAL_MODE", "net")
+                    MET.MET_REST  = float(current_app.config.get("MET_REST", 1.0))
+
+                    m = _sessions.update(
+                        dev_id=uid,
+                        user=u,
+                        hr=bpm,
+                        ts_iso=ts_iso,
+                        mode=mode_for_metrics,
+                    )
+
                     out.append({
                         "dev": uid,
                         "hr": bpm,
                         "ts": now_ms,
                         "user": {"apodo": apodo},
-                        "metrics": {"hr_max": hr_max_eff, "zone": _zone_from_bpm(bpm, hr_max_eff)}
+                        "metrics": {
+                            "hr_max": m["hr_max"],
+                            "zone":   m["zone"],
+                            "kcal":   m["kcal"],
+                            "points": m["moov_points"],
+                        }
                     })
 
                 yield f"data: {json.dumps(out, separators=(',',':'))}\n\n"

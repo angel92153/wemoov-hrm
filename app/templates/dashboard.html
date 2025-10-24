@@ -185,8 +185,12 @@
       const hr=(typeof d.hr==='number')?d.hr:null;
       const m=d.metrics||{}, hrmax=m.hr_max??null, zone=m.zone||'Z1';
       const pct=pctFrom(hr,hrmax);
+      const kcal=(typeof m.kcal==='number')?m.kcal:null;
+      const pts =(typeof m.points==='number')?m.points:null;
+
       const card=document.createElement('div');
       card.className=`card ${zoneClass(zone)}`; card.style.opacity='1';
+
       const nick = Object.assign(document.createElement('div'), { className:'nick', textContent:apodo });
       const pctEl= Object.assign(document.createElement('div'), { className:'pct',  textContent:(pct==null?'--%':`${pct}%`) });
 
@@ -197,13 +201,13 @@
       hrWrap.append(hrEl, heart);
 
       const kWrap =Object.assign(document.createElement('div'), { className:'metric kcal' });
-      const kcalEl=Object.assign(document.createElement('span'), { textContent:'--' });
+      const kcalEl=Object.assign(document.createElement('span'), { id:`kcal-${d.dev}`, textContent:(kcal==null?'--':(Math.round(kcal*10)/10).toFixed(0)) });
       const flame =document.createElement('span'); flame.className='icon';
       flame.innerHTML=`<svg viewBox="0 0 24 24"><path d="M12 2C9.243 5.026 8 7.91 8 10.5A4.5 4.5 0 0 0 12.5 15c2.4 0 4.5-2 4.5-4.5 0-2.59-1.243-5.474-4-8.5zM12 22c5.523 0 10-4.477 10-10 0-4.004-2.383-7.738-6-9.334.666 1.944 1 3.994 1 6.334a6 6 0 1 1-12 0c0-2.34.334-4.39 1-6.334C4.383 4.262 2 7.996 2 12c0 5.523 4.477 10 10 10z"/></svg>`;
       kWrap.append(kcalEl, flame);
 
       const mWrap =Object.assign(document.createElement('div'), { className:'metric moov' });
-      const moovEl=Object.assign(document.createElement('span'), { textContent:'--' });
+      const moovEl=Object.assign(document.createElement('span'), { id:`moov-${d.dev}`, textContent:(pts==null?'--':(Math.round(pts*10)/10).toFixed(0)) });
       const mlogo =document.createElement('span'); mlogo.className='icon';
       mlogo.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M7 16V8h2.6l2.4 4 2.4-4H17v8h-2V11.7l-2 3.3h-2L9 11.7V16H7z" fill="var(--bg)"></path></svg>`;
       mWrap.append(moovEl, mlogo);
@@ -224,6 +228,14 @@
       const pct=pctFrom(hr,hrmax);
       const pctEl = card.querySelector('.pct'); if (pctEl) pctEl.textContent = (pct==null?'--%':`${pct}%`);
       const hrEl = card.querySelector(`#hr-${d.dev}`); if (hrEl) hrEl.textContent = (hr==null?'--':`${hr}`);
+
+      // NUEVO: actualizar kcal y puntos (si vienen en metrics)
+      const kcal = (typeof m.kcal==='number') ? m.kcal : null;
+      const pts  = (typeof m.points==='number') ? m.points : null;
+      const kcalEl = card.querySelector(`#kcal-${d.dev}`);
+      const ptsEl  = card.querySelector(`#moov-${d.dev}`);
+      if (kcalEl) kcalEl.textContent = (kcal==null ? '--' : (Math.round(kcal*10)/10).toFixed(0));
+      if (ptsEl)  ptsEl.textContent  = (pts ==null ? '--' : (Math.round(pts *10)/10).toFixed(0));
     }
 
     function reconcile(list){
