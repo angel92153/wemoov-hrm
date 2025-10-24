@@ -29,13 +29,11 @@ _sessions = SessionStore()
 def _provider():
     prov = current_app.config.get("_HR_PROVIDER_SINGLETON")
     if prov is None:
-        mode = (current_app.config.get("HR_PROVIDER", "sim") or "sim").lower()
-        prov = RealHRProvider() if mode == "real" else SimHRProvider()
+        from app.services.hrm.combined import CombinedHRProvider
+        prov = CombinedHRProvider()
         current_app.config["_HR_PROVIDER_SINGLETON"] = prov
     return prov
 
-def _mode_is_real() -> bool:
-    return (current_app.config.get("HR_PROVIDER", "sim") or "sim").lower() == "real"
 
 def _class_is_active() -> bool:
     """
@@ -114,41 +112,26 @@ def _reading_for_user(u: dict, prov, now_ms: int, recent_ms: int):
     o None si NO debe mostrarse.
 
     Reglas:
-    - Modo SIM global (HR_PROVIDER != 'real'): TODOS los usuarios se leen del sim.
-    - Modo REAL:
-        * Usuarios con is_sim==1 -> sim (bpm>0).
-        * Resto -> real: requiere device_id, bpm>0 y frescura.
+    - Usuarios simulados (is_sim==1): SIEMPRE aparecen; su HR viene de prov.read_current(uid).
+      Si el sim devolviera <=0, el Combined provider ya inyecta HR sintético.
+    - Usuarios reales (is_sim==0): SOLO aparecen si hay device_id, bpm>0 y lectura FRESCA.
+      No hay fallback a simulador.
     """
     uid = int(u["id"])
     device_id = u.get("device_id")
     is_user_sim = int(u.get("is_sim") or 0) == 1
 
-    # SIM global → sim para todos
-    if not _mode_is_real():
-        try:
-            r = prov.read_current(uid)
-            if not isinstance(r, dict): return None
-            bpm = int(r.get("bpm") or 0)
-            if bpm <= 0: return None
-            ts_ms = _to_ms(r.get("ts"))
-            return {"bpm": bpm, "ts_ms": ts_ms}
-        except Exception:
-            return None
-
-    # REAL global:
-    # Simulados marcados por usuario
     if is_user_sim:
+        # SIMULADO: siempre visible
         try:
             r = prov.read_current(uid)
-            if not isinstance(r, dict): return None
-            bpm = int(r.get("bpm") or 0)
-            if bpm <= 0: return None
-            ts_ms = _to_ms(r.get("ts"))
-            return {"bpm": bpm, "ts_ms": ts_ms}
+            bpm = int(r.get("bpm") or 0) if isinstance(r, dict) else 0
+            ts_ms = _to_ms(r.get("ts")) if isinstance(r, dict) else now_ms
         except Exception:
-            return None
+            bpm, ts_ms = 0, now_ms
+        return {"bpm": bpm, "ts_ms": ts_ms}
 
-    # Reales estrictos
+    # REAL: estricto → requiere device_id y lectura fresca >0 bpm
     if device_id is None:
         return None
     if not hasattr(prov, "read_current_by_device"):
@@ -159,13 +142,16 @@ def _reading_for_user(u: dict, prov, now_ms: int, recent_ms: int):
         return None
     if not isinstance(r, dict):
         return None
+
     bpm = int(r.get("bpm") or 0)
     if bpm <= 0:
         return None
     ts_ms = _to_ms(r.get("ts"))
     if not _is_fresh(ts_ms, now_ms, recent_ms):
         return None
+
     return {"bpm": bpm, "ts_ms": ts_ms}
+
 
 def _ts_ms_to_iso_utc(ts_ms: int | None, fallback_now_ms: int) -> str:
     base_ms = ts_ms if isinstance(ts_ms, (int, float)) else fallback_now_ms

@@ -18,10 +18,11 @@ bp = Blueprint("api", __name__)
 def _provider():
     prov = current_app.config.get("_HR_PROVIDER_SINGLETON")
     if prov is None:
-        mode = current_app.config.get("HR_PROVIDER", "sim").lower()
-        prov = RealHRProvider() if mode == "real" else SimHRProvider()
+        from app.services.hrm.combined import CombinedHRProvider
+        prov = CombinedHRProvider()
         current_app.config["_HR_PROVIDER_SINGLETON"] = prov
     return prov
+
 
 @bp.get("/ant/health")
 def ant_health():

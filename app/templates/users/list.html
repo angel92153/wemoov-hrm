@@ -5,6 +5,21 @@
   <title>Usuarios HRM</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="/static/brand.css">
+  <style>
+    .toolbar{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+    .filters button{ margin:0 2px; }
+    .sim-ctrl{ display:flex; align-items:center; gap:8px; }
+    .sim-ctrl input[type="number"]{ width:96px; }
+    .muted{ opacity:.8; font-size:.9em; }
+    .status-msg{ min-height: 1.2em; }
+    .badge{ display:inline-flex; align-items:center; gap:6px; padding:2px 8px; border-radius:999px; background:#1f2937; color:#fff; font-size:.8em; }
+    .badge .dot{ width:8px; height:8px; border-radius:50%; background:#10b981; display:inline-block; }
+    .badge-inline{ margin-left:6px; }
+    .badge-auto{ background:#334155; }
+    .badge-manual{ background:#7c3aed; }
+    .btn[disabled]{ opacity:.6; pointer-events:none; }
+    .table-wrap{ overflow:auto; }
+  </style>
 </head>
 <body>
   <div class="wrap">
@@ -18,6 +33,14 @@
         <button type="button" class="active" data-filter="all" id="btn-all">Todos (0)</button>
         <button type="button" data-filter="real" id="btn-real">Reales (0)</button>
         <button type="button" data-filter="sim" id="btn-sim">Simulados (0)</button>
+      </div>
+
+      <!-- Control de simulados -->
+      <div class="sim-ctrl" style="margin-left:auto">
+        <label for="simCount"><strong>Simulados:</strong></label>
+        <input id="simCount" type="number" min="0" step="1" value="{{ sim_count or 0 }}" />
+        <button id="applySim" class="btn">Aplicar</button>
+        <span id="simStatus" class="muted status-msg"></span>
       </div>
     </div>
 
@@ -127,6 +150,52 @@
       // Inicializar
       paintCounts();
       setFilter('all');
+    })();
+
+    // ===== Control de simulados =====
+    (function(){
+      const input  = document.getElementById('simCount');
+      const apply  = document.getElementById('applySim');
+      const status = document.getElementById('simStatus');
+
+      let debTimer = null;
+
+      async function postCount(n){
+        try{
+          apply.disabled = true;
+          status.textContent = 'Aplicando…';
+          const res = await fetch('/users/simulated', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ count: n })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok){
+            throw new Error(data.error || 'Error aplicando cambios');
+          }
+          status.textContent = 'Hecho ✓';
+          // Recarga para refrescar tabla y contadores
+          setTimeout(() => { window.location.reload(); }, 300);
+        }catch(e){
+          status.textContent = 'Error: ' + (e.message || e);
+          apply.disabled = false;
+        }
+      }
+
+      // Click explícito
+      apply.addEventListener('click', () => {
+        const n = Math.max(0, parseInt(input.value || '0', 10));
+        postCount(n);
+      });
+
+      // También con debounce al escribir
+      input.addEventListener('input', () => {
+        if (debTimer) clearTimeout(debTimer);
+        debTimer = setTimeout(() => {
+          const n = Math.max(0, parseInt(input.value || '0', 10));
+          postCount(n);
+        }, 600);
+      });
     })();
   </script>
 </body>

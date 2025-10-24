@@ -8,10 +8,6 @@ class Config:
     USERS_DB_PATH = os.environ.get("USERS_DB_PATH", "users.db")
     SESSIONS_DB_PATH = os.environ.get("SESSIONS_DB_PATH", "sessions.db")
 
-    # --- HR Provider (fuente de datos de frecuencia cardíaca) ---
-    # "sim" = simulador | "real" = lector ANT+ real
-    HR_PROVIDER = os.environ.get("HR_PROVIDER", "real")
-
     # Tiempo máximo de vida para una lectura de HR en caché (no usado aún)
     HR_CACHE_TTL = int(os.environ.get("HR_CACHE_TTL", "1"))
 

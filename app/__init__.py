@@ -29,7 +29,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     # Inicialización de bases de datos
     # ----------------------------------
     init_db_with_defaults()  # crea/actualiza sessions.db (clases, etc.)
-    init_users_db(app.config["USERS_DB_PATH"], seed=True)  # users.db (con migraciones suaves)
+    init_users_db(app.config["USERS_DB_PATH"])
 
     # ----------------------------------
     # Filtros de plantilla (edad / Tanaka)
