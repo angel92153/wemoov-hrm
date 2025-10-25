@@ -38,7 +38,35 @@
     }
     .topbar .left{ justify-self:start; display:flex; align-items:center; gap: 0.25ch; white-space: nowrap; min-width: 0; }
     .topbar .center{ justify-self:center; height:100%; display:flex; align-items:center; }
-    .topbar .right{ justify-self:end; display:flex; align-items:center; }
+    .topbar .right {
+    justify-self: end;
+    display: flex;
+    align-items: center;
+
+    /* Reservamos espacio fijo para el reloj y un margen cómodo al borde */
+    --clock-ch: 8;                /* "00:00:00" → 8 caracteres */
+    --clock-right-gap: 88px;      /* margen con el borde (aumentado) */
+
+    width: calc(var(--clock-ch) * 1ch + var(--clock-right-gap));
+    padding-right: var(--clock-right-gap);
+    box-sizing: content-box;      /* asegura que el padding sume al ancho total */
+  }
+
+  /* Reloj alineado a la izquierda dentro de ese bloque */
+  .clock {
+    display: block;
+    width: calc(var(--clock-ch) * 1ch);
+    text-align: left;                 /* ← alineado a la izquierda */
+    font-family: "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: .03em;
+    white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0,0,0,.25);
+    font-variant-numeric: tabular-nums;
+    font-size: calc(var(--topbar-h) * 0.48);
+    color: #ffffff;
+  }
 
     .phase, .timer, .clock {
       font-family: "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
@@ -127,21 +155,24 @@
     const timerEl = document.getElementById('phaseTimer');
     function fmtMMSS(sec){ sec=Math.max(0,Math.floor(sec)); return `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`; }
     function setPhaseColor(hex){ document.documentElement.style.setProperty('--phase-color', hex||'#eab308'); }
+    // Estado sesión (alias backend)
     async function pollSession(){
       try{
-        const res = await fetch('/session/status', { cache:'no-store' });
+        const res = await fetch('/control/status', { cache:'no-store' });
         const s = await res.json();
-        if (!s.active && s.scheduled_ts){
-          const cd = s.countdown_s || 0;
-          if (s.show_countdown){
-            setPhaseColor('#ffffff'); phaseEl.textContent = 'COUNTDOWN';
-            timerEl.textContent = fmtMMSS(cd); timerEl.classList.remove('invisible');
-          }else{
-            setPhaseColor('#e7eaf3'); phaseEl.textContent = 'Sesión programada';
-            timerEl.textContent = new Date(s.scheduled_ts*1000).toLocaleTimeString(); timerEl.classList.remove('invisible');
-          }
+
+        if (!s.active && s.show_countdown){
+          // COUNTDOWN visible (manual o semanal)
+          document.documentElement.style.setProperty('--phase-color', '#ffffff');
+          const pausedSuffix = (s.countdown_paused ? ' · PAUSA' : '');
+          phaseEl.textContent = 'COUNTDOWN' + pausedSuffix;
+
+          timerEl.textContent = fmtMMSS(s.countdown_s || 0);
+          timerEl.classList.remove('invisible');
+
           return;
         }
+
         if (s.active){
           setPhaseColor(s.phase_color||'#eab308');
           phaseEl.textContent = s.phase_key || 'Sesión';
@@ -149,10 +180,15 @@
           timerEl.classList.remove('invisible');
           return;
         }
-        setPhaseColor('#e7eaf3'); phaseEl.textContent = '';
-        timerEl.textContent = '00:00'; timerEl.classList.add('invisible');
+
+        // Inactiva sin countdown
+        setPhaseColor('#e7eaf3');
+        phaseEl.textContent = '';
+        timerEl.textContent = '00:00';
+        timerEl.classList.add('invisible');
       }catch(e){}
     }
+
     setInterval(pollSession,1000); pollSession();
 
     // ====== HR Grid ======

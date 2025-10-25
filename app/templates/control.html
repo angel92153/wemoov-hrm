@@ -6,23 +6,28 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <link rel="stylesheet" href="/static/brand.css">
   <style>
-    /* Layout mínimo específico de esta vista; lo demás viene de brand.css */
     .wrap-narrow{ max-width: 760px; margin: 0 auto; }
     .center{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; min-height:70vh; text-align:center; }
+
     .timer{
       font-family: var(--ff-head);
       font-weight: 800;
       font-size: clamp(32px, 9vw, 86px);
       letter-spacing: .5px;
     }
-    .timer.phase{ color: var(--text); }
-    .timer.countdown{ color: #ffffff; }
-    .phase-label{ font-size: clamp(18px, 3vw, 36px); color: var(--muted); font-family: var(--ff-head);   /* usa Stretch Pro */ letter-spacing: 0.5px; text-transform: uppercase;
-}
+    .timer.phase { color: var(--text); }
+    .timer.countdown { color: #ffffff; }
+
+    .phase-label{
+      font-size: clamp(18px, 3vw, 36px);
+      color: var(--muted);
+      font-family: var(--ff-head);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
 
     .controls{ display:flex; gap:18px; align-items:center; justify-content:center; }
 
-    /* Controles circulares play/prev/next, mantienen look propio */
     .ctrl{
       appearance:none; border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer;
       width:72px; height:72px; border-radius:50%;
@@ -35,14 +40,10 @@
 
     .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; }
 
-    /* Panel superior */
     .panel-inner{ padding:16px; display:grid; grid-template-columns:1fr; gap:10px; }
     .form-row{ display:grid; grid-template-columns:1fr auto auto; gap:8px; }
 
-    /* Select sigue la estética definida en brand.css */
-    select{
-      padding:10px 12px; border-radius:12px;
-    }
+    select{ padding:10px 12px; border-radius:12px; }
 
     .status{ font-size:13px; color:var(--muted); text-align:center; min-height:1.4em; }
   </style>
@@ -50,7 +51,6 @@
 <body>
 <div class="wrap-narrow">
 
-  <!-- Panel de selección / arranque manual -->
   <div class="panel" style="margin: 12px auto 22px;">
     <div class="panel-inner">
       <div class="form-row">
@@ -77,154 +77,191 @@
 </div>
 
 <script>
-const $ = (id) => document.getElementById(id)
+const $ = (id) => document.getElementById(id);
 
 function fmt(s){
-  s = Math.max(0, s|0)
-  const m = Math.floor(s/60), ss = s%60
-  return String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0')
+  s = Math.max(0, s|0);
+  const m = Math.floor(s/60), ss = s%60;
+  return String(m).padStart(2,'0') + ':' + String(ss).padStart(2,'0');
 }
 
 /* ==================== CARGA DE CLASES ==================== */
 async function loadClasses(){
-  const sel = $('classSelect')
-  const status = $('classStatus')
+  const sel = $('classSelect');
+  const status = $('classStatus');
   try{
-    status.textContent = 'Cargando clases…'
-    const r = await fetch('/control/classes', { cache:'no-store' })
-    const raw = await r.json()
-    // admite array directo o {classes: [...]}
-    const list = Array.isArray(raw) ? raw : (Array.isArray(raw.classes) ? raw.classes : [])
+    status.textContent = 'Cargando clases…';
+    const r = await fetch('/control/classes', { cache:'no-store' });
+    const raw = await r.json();
+    const list = Array.isArray(raw) ? raw : (Array.isArray(raw.classes) ? raw.classes : []);
 
     const rows = (Array.isArray(list) ? list : []).map(c => {
-      const id = c.id ?? c.key ?? c.class_id ?? c.slug ?? c.name ?? c.label
-      const label = c.label ?? c.name ?? c.title ?? String(id)
-      return id ? { id: String(id), label: String(label) } : null
-    }).filter(Boolean)
+      const id = c.id ?? c.key ?? c.class_id ?? c.slug ?? c.name ?? c.label;
+      const label = c.label ?? c.name ?? c.title ?? String(id);
+      return id ? { id: String(id), label: String(label) } : null;
+    }).filter(Boolean);
 
-    sel.innerHTML = ''
+    sel.innerHTML = '';
     if (!rows.length){
-      sel.innerHTML = '<option value="">— No hay clases disponibles —</option>'
-      status.textContent = 'No hay clases en el catálogo.'
-      return
+      sel.innerHTML = '<option value="">— No hay clases disponibles —</option>';
+      status.textContent = 'No hay clases en el catálogo.';
+      return;
     }
-    const frag = document.createDocumentFragment()
-    const opt0 = document.createElement('option')
-    opt0.value = ''; opt0.textContent = '— Selecciona una clase —'
-    frag.appendChild(opt0)
+
+    const frag = document.createDocumentFragment();
+    const opt0 = document.createElement('option');
+    opt0.value = ''; opt0.textContent = '— Selecciona una clase —';
+    frag.appendChild(opt0);
+
     rows.forEach(({id,label}) => {
-      const opt = document.createElement('option')
-      opt.value = id
-      opt.textContent = label           // <- solo el nombre (sin duración)
-      frag.appendChild(opt)
-    })
-    sel.appendChild(frag)
-    status.textContent = ''
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = label;
+      frag.appendChild(opt);
+    });
+    sel.appendChild(frag);
+    status.textContent = '';
   }catch(e){
-    $('classSelect').innerHTML = '<option value="">(Error cargando clases)</option>'
-    $('classStatus').textContent = 'No se pudieron cargar las clases.'
+    sel.innerHTML = '<option value="">(Error cargando clases)</option>';
+    status.textContent = 'No se pudieron cargar las clases.';
   }
 }
 
+/* ==================== BOTONES ==================== */
 $('startClass').onclick = async () => {
-  const sel = $('classSelect')
-  const cid = sel.value
-  const status = $('classStatus')
+  const sel = $('classSelect');
+  const cid = sel.value;
+  const status = $('classStatus');
   if (!cid){
-    status.textContent = 'Selecciona una clase antes de iniciar.'
-    return
+    status.textContent = 'Selecciona una clase antes de iniciar.';
+    return;
   }
   try{
-    $('startClass').disabled = true
-    status.textContent = 'Iniciando clase…'
+    $('startClass').disabled = true;
+    status.textContent = 'Iniciando clase…';
     const r = await fetch('/control/start', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ class_id: cid })
-    })
-    const j = await r.json()
+    });
+    const j = await r.json();
     if (j && j.ok){
-      status.textContent = 'Clase iniciada.'
-      await poll()
+      status.textContent = 'Clase iniciada.';
+      await poll();
     }else{
-      status.textContent = 'No se pudo iniciar la clase.'
+      status.textContent = 'No se pudo iniciar la clase.';
     }
   }catch(e){
-    status.textContent = 'Error iniciando la clase.'
+    status.textContent = 'Error iniciando la clase.';
   }finally{
-    $('startClass').disabled = false
+    $('startClass').disabled = false;
   }
-}
+};
 
 $('stopClass').onclick = async () => {
-  const status = $('classStatus')
+  const status = $('classStatus');
   try{
-    const r = await fetch('/control/stop', { method:'POST' })
+    const r = await fetch('/control/stop', { method:'POST' });
     if (r.ok){
-      status.textContent = 'Sesión detenida.'
-      await poll()
+      status.textContent = 'Sesión detenida.';
+      await poll();
     }else{
-      status.textContent = 'No se pudo detener la sesión.'
+      status.textContent = 'No se pudo detener la sesión.';
     }
   }catch(e){
-    status.textContent = 'Error deteniendo la sesión.'
+    status.textContent = 'Error deteniendo la sesión.';
   }
-}
+};
 
 /* ==================== POLL DE ESTADO ==================== */
 async function poll(){
   try{
-    const r = await fetch('/control/status', { cache:'no-store' })
-    const j = await r.json()
-    const t = $('timer'), info = $('info'), controls = $('controls'), hint = $('hint')
+    const r = await fetch('/control/status', { cache:'no-store' });
+    const j = await r.json();
+    const t = $('timer'), info = $('info'), controls = $('controls'), hint = $('hint');
 
-    // Pre-countdown (inactiva + show_countdown)
+    // ===== COUNTDOWN (manual o semanal) =====
     if(!j.active && j.show_countdown){
-      t.className = 'timer countdown'
-      t.textContent = fmt(j.countdown_s ?? 0)
-      info.textContent = 'COUNTDOWN'
-      controls.style.display = 'none'
-      hint.innerHTML = j.next_class_id ? `<span class="pill">Clase: ${j.next_class_id}</span>` : ''
-      return
+      const planned = j.next_class_id || j.class_id || 'moov';
+
+      t.className = 'timer countdown';
+      t.style.color = '#ffffff';
+      info.style.color = '#ffffff';
+      t.textContent = fmt(j.countdown_s ?? 0);
+
+      // Muestra “· PAUSA” si está congelado el countdown manual
+      const pausedSuffix = (j.countdown_paused ? ' · PAUSA' : '');
+      info.textContent = 'COUNTDOWN' + pausedSuffix;
+
+      controls.style.display = '';
+      hint.innerHTML = planned ? `<span class="pill">Clase: ${planned}</span>` : '';
+
+      // ⏭ → empezar ya
+      $('next').onclick = async ()=>{
+        await fetch('/control/start', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ class_id: planned })
+        });
+        await poll();
+      };
+
+      // ⏯ → pausa/reanuda countdown (manual)
+      $('toggle').onclick = async ()=>{
+        await fetch('/control/countdown/toggle', { method:'POST' });
+        await poll();
+      };
+
+      // ⏮ → sin acción especial (puedes poner /control/unschedule si quieres)
+      $('prev').onclick = null;
+
+      return;
     }
 
-    // Sesión activa
+
+    // ===== SESIÓN ACTIVA =====
     if(j.active){
-      const phaseColor = j.phase_color || '#ffffff'
-      t.className = 'timer phase'
-      t.style.color = phaseColor
-      t.textContent = fmt(j.phase_remaining_s ?? 0)
-      info.textContent = (j.phase_key || 'Fase') + (j.paused ? ' · PAUSA' : '')
-      info.style.color = phaseColor
-      controls.style.display = ''
-      hint.innerHTML = ''
-      return
+      const phaseColor = j.phase_color || '#ffffff';
+      t.className = 'timer phase';
+      t.style.color = phaseColor;
+      t.textContent = fmt(j.phase_remaining_s ?? 0);
+      info.textContent = (j.phase_key || 'Fase') + (j.paused ? ' · PAUSA' : '');
+      info.style.color = phaseColor;
+      controls.style.display = '';
+      hint.innerHTML = '';
+
+      $('prev').onclick   = async ()=>{ await fetch('/control/prev',        {method:'POST'}); await poll(); };
+      $('next').onclick   = async ()=>{ await fetch('/control/next',        {method:'POST'}); await poll(); };
+      $('toggle').onclick = async ()=>{ await fetch('/control/toggle_pause',{method:'POST'}); await poll(); };
+      return;
     }
 
-    // Estado inactivo sin countdown
-    t.className = 'timer'
-    t.style.color = ''
-    t.textContent = '--:--'
-    info.textContent = 'Sin sesión'
-    info.style.color = 'var(--muted)'  // 🔧 restaurar color neutro
-    controls.style.display = 'none'
-    hint.innerHTML = ''
+    // ===== INACTIVA =====
+    t.className = 'timer';
+    t.style.color = '';
+    t.textContent = '--:--';
+    info.textContent = 'Sin sesión';
+    info.style.color = 'var(--muted)';
+    controls.style.display = 'none';
+    hint.innerHTML = '';
+
+    $('prev').onclick = $('next').onclick = $('toggle').onclick = null;
   }catch(e){
     // silencioso
   }
 }
 
+
 /* ==================== CONTROLES ==================== */
-$('prev').onclick   = async ()=>{ await fetch('/control/prev',        {method:'POST'}); await poll(); }
-$('next').onclick   = async ()=>{ await fetch('/control/next',        {method:'POST'}); await poll(); }
-$('toggle').onclick = async ()=>{ await fetch('/control/toggle_pause',{method:'POST'}); await poll(); }
+$('prev').onclick   = async ()=>{ await fetch('/control/prev',        {method:'POST'}); await poll(); };
+$('next').onclick   = async ()=>{ await fetch('/control/next',        {method:'POST'}); await poll(); };
+$('toggle').onclick = async ()=>{ await fetch('/control/toggle_pause',{method:'POST'}); await poll(); };
 
 /* ==================== INIT ==================== */
-setInterval(poll, 1000)
-loadClasses()
-poll()
+setInterval(poll, 1000);
+loadClasses();
+poll();
 
-// (Opcional) refrescar el selector al volver a la pestaña:
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) loadClasses();
 });

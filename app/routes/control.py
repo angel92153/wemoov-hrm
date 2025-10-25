@@ -1,8 +1,8 @@
-# app/routes/control_api.py
+# app/routes/control.py
 from flask import Blueprint, request, jsonify, render_template
-from app.services.session_manager import SESSION, list_class_models
+from app.services.sessions_manager import SESSION, list_class_models
 
-bp = Blueprint("control_api", __name__, url_prefix="/control")
+bp = Blueprint("control", __name__, url_prefix="/control")
 
 # ===============================
 #   VISTA PRINCIPAL
@@ -70,3 +70,9 @@ def prev_phase():
 def classes():
     """Devuelve la lista de clases disponibles."""
     return jsonify(list_class_models())
+
+@bp.post("/countdown/toggle")
+def countdown_toggle():
+    """Pausa o reanuda el countdown manual (no afecta al semanal)."""
+    SESSION.toggle_countdown_pause()
+    return jsonify({"ok": True, "status": SESSION.status()})

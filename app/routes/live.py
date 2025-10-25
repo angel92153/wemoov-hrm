@@ -8,8 +8,6 @@ from app.services.hrm.sim import SimHRProvider
 from app.services.metrics import SessionStore
 from app.services import metrics as MET
 
-GHOST_BASE = 9_000_000  # ya no se usa, pero se deja por compatibilidad
-
 try:
     from app.services.hrm.real import RealHRProvider  # type: ignore
 except Exception:
@@ -120,32 +118,28 @@ def _zone_from_bpm(hr: int, hr_max: int = 190) -> str:
     if p < 0.90: return "Z4"
     return "Z5"
 
-
 # -------------------------
-# /live (polling)
+# Snapshot builder (compartido por /live y /live/stream)
 # -------------------------
-@bp.get("/live")
-def live():
-    try:
-        limit = max(1, min(64, int(request.args.get("limit", "16"))))
-    except ValueError:
-        limit = 16
-
-    users_repo = UsersRepo(current_app.config["USERS_DB_PATH"])
-    prov = _provider()
-
-    recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))
-    mode_for_metrics = str(current_app.config.get("SESSION_MODE", "mixed"))
-    class_active = _class_is_active()
-
+def _build_live_snapshot(users_repo, prov, limit, recent_ms, mode_for_metrics):
+    """
+    Devuelve:
+        out: lista de dicts para enviar al cliente
+        assigned_devs: set[int] de device_id asignados a usuarios
+        seen_users: set[int] de uid presentes en la iteración
+        now_ms: int timestamp en ms (servidor)
+    NOTA: no hace limpieza de sesiones (se mantiene donde ya la haces).
+    """
     try:
         users = users_repo.list(limit=limit)
     except Exception as e:
-        return jsonify({"error": "db_error", "message": str(e)}), 500
+        # Levantamos para que el caller decida cómo responder ([], error, etc.)
+        raise
 
     now_ms = int(time.time() * 1000)
     out, seen_users, assigned_devs = [], set(), set()
 
+    # 1) Construir assigned_devs
     for u in users:
         dev = u.get("device_id")
         if dev is not None:
@@ -154,22 +148,24 @@ def live():
             except Exception:
                 pass
 
+    # 2) Recorrer usuarios y generar lecturas + métricas
     for u in users:
         uid = int(u["id"])
         seen_users.add(uid)
         apodo = (u.get("apodo") or f"{u.get('nombre','')} {u.get('apellido','')}".strip() or f"ID {uid}").strip()
         reading = _reading_for_user(u, prov, now_ms, recent_ms)
         if reading is None:
+            # La limpieza (si aplica) la hace el caller según endpoint
             continue
 
         bpm = int(reading["bpm"])
         ts_iso = _now_iso_utc()
+
         MET.KCAL_MODE = current_app.config.get("KCAL_MODE", "net")
         MET.MET_REST = float(current_app.config.get("MET_REST", 1.0))
 
         m = _sessions.update(dev_id=uid, user=u, hr=bpm, ts_iso=ts_iso, mode=mode_for_metrics)
 
-        # >>> aquí el cambio importante <<<
         is_sim = int(u.get("is_sim") or 0) == 1
         device_id = u.get("device_id")
         display_dev = uid if is_sim or not device_id else int(device_id)
@@ -177,7 +173,7 @@ def live():
         out.append({
             "dev": display_dev,
             "hr": bpm,
-            "ts": now_ms,
+            "ts": now_ms,  # si quieres, aquí podrías exponer reading["ts_ms"]
             "user": {"apodo": apodo},
             "metrics": {
                 "hr_max": m["hr_max"],
@@ -187,7 +183,7 @@ def live():
             },
         })
 
-    # Fantasmas (sin usuario)
+    # 3) Fantasmas (dispositivos recientes sin usuario)
     try:
         recent_s = max(3, int(round(recent_ms / 1000)))
         seen = prov.recent_devices(recent=recent_s) if hasattr(prov, "recent_devices") else []
@@ -217,6 +213,34 @@ def live():
         except Exception:
             continue
 
+    return out, assigned_devs, seen_users, now_ms
+
+
+
+# -------------------------
+# /live (polling)
+# -------------------------
+@bp.get("/live")
+def live():
+    try:
+        limit = max(1, min(64, int(request.args.get("limit", "16"))))
+    except ValueError:
+        limit = 16
+
+    users_repo = UsersRepo(current_app.config["USERS_DB_PATH"])
+    prov = _provider()
+    recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))
+    mode_for_metrics = str(current_app.config.get("SESSION_MODE", "mixed"))
+    class_active = _class_is_active()
+
+    try:
+        out, assigned_devs, seen_users, now_ms = _build_live_snapshot(
+            users_repo, prov, limit, recent_ms, mode_for_metrics
+        )
+    except Exception as e:
+        return jsonify({"error": "db_error", "message": str(e)}), 500
+
+    # Limpieza (conserva tu lógica original)
     if not class_active:
         GRACE_MS = 10_000
         for dev_id, sess in list(_sessions._by_dev.items()):
@@ -250,89 +274,116 @@ def live_stream():
     recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))
     mode_for_metrics = str(current_app.config.get("SESSION_MODE", "mixed"))
 
+    def build_once():
+        """
+        Construye un snapshot para esta iteración del stream:
+        - Lee usuarios
+        - Obtiene lecturas (sim o reales)
+        - Actualiza métricas en _sessions
+        - Añade fantasmas
+        - Hace la limpieza por usuario SIN lectura si la clase no está activa (tu comportamiento original)
+        Devuelve: out (lista para enviar al cliente) y now_ms (timestamp servidor en ms)
+        """
+        try:
+            users = users_repo.list(limit=limit)
+        except Exception as e:
+            # Si falla la DB, devolvemos lista vacía y dejamos que el caller loguee/mande data: []
+            raise e
+
+        class_active = _class_is_active()
+        now_ms = int(time.time() * 1000)
+        out, assigned_devs = [], set()
+
+        # 1) Dispositivos asignados (para filtrar fantasmas)
+        for u in users:
+            dev = u.get("device_id")
+            if dev is not None:
+                try:
+                    assigned_devs.add(int(dev))
+                except Exception:
+                    pass
+
+        # 2) Usuarios con lectura (o limpieza si no hay)
+        for u in users:
+            uid = int(u["id"])
+            apodo = (u.get("apodo") or f"{u.get('nombre','') or ''} {u.get('apellido','') or ''}".strip() or f"ID {uid}").strip()
+
+            reading = _reading_for_user(u, prov, now_ms, recent_ms)
+            if reading is None:
+                # Mantener tu comportamiento original de limpieza en el stream
+                if not class_active:
+                    _sessions.clear(uid)
+                continue
+
+            bpm = int(reading["bpm"])
+            ts_iso = _now_iso_utc()
+
+            # Parámetros de MET justo antes de actualizar
+            MET.KCAL_MODE = current_app.config.get("KCAL_MODE", "net")
+            MET.MET_REST = float(current_app.config.get("MET_REST", 1.0))
+
+            m = _sessions.update(dev_id=uid, user=u, hr=bpm, ts_iso=ts_iso, mode=mode_for_metrics)
+
+            # Cálculo del identificador de visualización (NO CAMBIA NADA)
+            is_sim = int(u.get("is_sim") or 0) == 1
+            device_id = u.get("device_id")
+            display_dev = uid if is_sim or not device_id else int(device_id)
+
+            out.append({
+                "dev": display_dev,
+                "hr": bpm,
+                "ts": now_ms,
+                "user": {"apodo": apodo},
+                "metrics": {
+                    "hr_max": m["hr_max"],
+                    "zone": m["zone"],
+                    "kcal": m["kcal"],
+                    "points": m["moov_points"],
+                }
+            })
+
+        # 3) Fantasmas (dispositivos recientes sin usuario asignado)
+        try:
+            recent_s = max(3, int(round(recent_ms / 1000)))
+            seen = prov.recent_devices(recent=recent_s) if hasattr(prov, "recent_devices") else []
+        except Exception:
+            seen = []
+
+        for d in seen:
+            try:
+                dev_id = int(d.get("dev"))
+                if dev_id in assigned_devs:
+                    continue
+                hr = int(d.get("hr") or 0)
+                if hr <= 0:
+                    continue
+                out.append({
+                    "dev": dev_id,
+                    "hr": hr,
+                    "ts": now_ms,
+                    "user": {"apodo": f"ID {dev_id}"},
+                    "metrics": {
+                        "hr_max": 190,
+                        "zone": _zone_from_bpm(hr, 190),
+                        "kcal": None,
+                        "points": None,
+                    },
+                })
+            except Exception:
+                continue
+
+        return out, now_ms
+
     def gen():
         try:
             while True:
                 try:
-                    users = users_repo.list(limit=limit)
+                    out, _ = build_once()
                 except Exception as e:
                     log.exception("live_stream db error: %s", e)
                     yield "data: []\n\n"
                     time.sleep(1)
                     continue
-
-                class_active = _class_is_active()
-                now_ms = int(time.time() * 1000)
-                out, assigned_devs = [], set()
-
-                for u in users:
-                    dev = u.get("device_id")
-                    if dev is not None:
-                        try:
-                            assigned_devs.add(int(dev))
-                        except Exception:
-                            pass
-
-                for u in users:
-                    uid = int(u["id"])
-                    apodo = (u.get("apodo") or f"{u.get('nombre','') or ''} {u.get('apellido','') or ''}".strip() or f"ID {uid}").strip()
-                    reading = _reading_for_user(u, prov, now_ms, recent_ms)
-                    if reading is None:
-                        if not class_active:
-                            _sessions.clear(uid)
-                        continue
-
-                    bpm = int(reading["bpm"])
-                    ts_iso = _now_iso_utc()
-                    MET.KCAL_MODE = current_app.config.get("KCAL_MODE", "net")
-                    MET.MET_REST = float(current_app.config.get("MET_REST", 1.0))
-                    m = _sessions.update(dev_id=uid, user=u, hr=bpm, ts_iso=ts_iso, mode=mode_for_metrics)
-
-                    is_sim = int(u.get("is_sim") or 0) == 1
-                    device_id = u.get("device_id")
-                    display_dev = uid if is_sim or not device_id else int(device_id)
-
-                    out.append({
-                        "dev": display_dev,
-                        "hr": bpm,
-                        "ts": now_ms,
-                        "user": {"apodo": apodo},
-                        "metrics": {
-                            "hr_max": m["hr_max"],
-                            "zone": m["zone"],
-                            "kcal": m["kcal"],
-                            "points": m["moov_points"],
-                        }
-                    })
-
-                try:
-                    recent_s = max(3, int(round(recent_ms / 1000)))
-                    seen = prov.recent_devices(recent=recent_s) if hasattr(prov, "recent_devices") else []
-                except Exception:
-                    seen = []
-
-                for d in seen:
-                    try:
-                        dev_id = int(d.get("dev"))
-                        if dev_id in assigned_devs:
-                            continue
-                        hr = int(d.get("hr") or 0)
-                        if hr <= 0:
-                            continue
-                        out.append({
-                            "dev": dev_id,
-                            "hr": hr,
-                            "ts": now_ms,
-                            "user": {"apodo": f"ID {dev_id}"},
-                            "metrics": {
-                                "hr_max": 190,
-                                "zone": _zone_from_bpm(hr, 190),
-                                "kcal": None,
-                                "points": None,
-                            },
-                        })
-                    except Exception:
-                        continue
 
                 yield f"data: {json.dumps(out, separators=(',',':'))}\n\n"
                 time.sleep(1)
@@ -348,15 +399,3 @@ def live_stream():
     headers = {"Content-Type": "text/event-stream", "Cache-Control": "no-store", "Connection": "keep-alive"}
     return Response(stream_with_context(gen()), headers=headers)
 
-
-# -------------------------
-# /live/health
-# -------------------------
-@bp.get("/live/health")
-def live_health():
-    users_db_abs = os.path.abspath(current_app.config["USERS_DB_PATH"])
-    try:
-        n = len(UsersRepo(current_app.config["USERS_DB_PATH"]).list(limit=1_000_000))
-        return jsonify({"ok": True, "users_count": n, "users_db": users_db_abs})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e), "users_db": users_db_abs}), 500

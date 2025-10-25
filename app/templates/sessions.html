@@ -89,6 +89,7 @@
 
 <script>
 const $ = id => document.getElementById(id)
+const API = '/sessions'  // <— base para todas las rutas del backend
 const COLORS = [
   {name:'Warm up', val:'#16a34a'},
   {name:'Demo/Trans', val:'#6b21a8'},
@@ -102,7 +103,7 @@ let calItems = []
 
 // ============ CLASES ============
 async function fetchClasses(){
-  const res = await fetch('/session/classes'); const j = await res.json(); classes = j.classes||[]
+  const res = await fetch(`${API}/classes`); const j = await res.json(); classes = j.classes||[]
   const ed = $('editorSelector'); ed.innerHTML=''
   classes.forEach(c=>{ const o=document.createElement('option'); o.value=c.id; o.textContent=c.label; ed.appendChild(o) })
   const def = $('defaultClass'); def.innerHTML = classes.map(c=>`<option value="${c.id}">${c.label}</option>`).join('')
@@ -178,7 +179,7 @@ $('saveClass').onclick = async ()=>{
   }
   if(!id){ id = label.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'') }
   const body = { id, label, phases: phasesBuffer }
-  const resp = await fetch('/session/classes', {
+  const resp = await fetch(`${API}/classes`, {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
   })
   const j = await resp.json()
@@ -188,7 +189,7 @@ $('saveClass').onclick = async ()=>{
 $('deleteClass').onclick = async ()=>{
   const id = $('editId').value.trim(); if(!id || id==='moov') return
   if(!confirm('¿Eliminar clase '+id+'?')) return
-  const r = await fetch('/session/classes/'+encodeURIComponent(id), {method:'DELETE'})
+  const r = await fetch(`${API}/classes/`+encodeURIComponent(id), {method:'DELETE'})
   const j = await r.json()
   if(!j.ok){ alert('Error al eliminar: ' + (j.error||'')); return }
   await fetchClasses()
@@ -196,7 +197,7 @@ $('deleteClass').onclick = async ()=>{
 
 // ---- Default class ----
 async function loadDefault(){
-  const r = await fetch('/session/default_class'); const j = await r.json(); const id=j.default_class_id
+  const r = await fetch(`${API}/default_class`); const j = await r.json(); const id=j.default_class_id
   $('defaultClass').value = id
   const found = classes.find(c => c.id === id);
   const name  = found ? found.label : id;
@@ -204,7 +205,7 @@ async function loadDefault(){
 }
 $('saveDefault').onclick = async ()=>{
   const id = $('defaultClass').value
-  const resp = await fetch('/session/default_class', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({class_id:id})})
+  const resp = await fetch(`${API}/default_class`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({class_id:id})})
   await resp.json()
   const found = classes.find(c => c.id === id);
   $('defInfo').textContent = 'Default: ' + (found ? found.label : id)
@@ -212,7 +213,7 @@ $('saveDefault').onclick = async ()=>{
 
 // ============ CALENDARIO (edición local + guardar masivo) ============
 async function loadCalendar(){
-  const res = await fetch('/session/calendar'); const j = await res.json();
+  const res = await fetch(`${API}/calendar`); const j = await res.json();
   calItems = (j.items||[]).map(x=>({sched_id:x.sched_id, dow:x.dow, time_str:x.time_str}))
   renderCalendar()
 }
@@ -271,7 +272,7 @@ $('calendar').addEventListener('click', (e)=>{
 
 $('saveCalendar').onclick = async ()=>{
   const payload = { items: calItems.map(x=>({dow:x.dow, time_str:x.time_str})) }
-  const resp = await fetch('/session/calendar_bulk', {
+  const resp = await fetch(`${API}/calendar_bulk`, {
     method:'PUT',
     headers:{'Content-Type':'application/json'},
     body: JSON.stringify(payload)
@@ -283,7 +284,7 @@ $('saveCalendar').onclick = async ()=>{
 
 // ============ ONE-OFF (día) ============
 async function loadOneOff(){
-  const r = await fetch('/session/oneoff'); const j = await r.json(); const items=j.items||[]
+  const r = await fetch(`${API}/oneoff`); const j = await r.json(); const items=j.items||[]
   const box = $('ooList'); box.innerHTML=''
   items.forEach(it=>{
     const row = document.createElement('div'); row.className='row'
@@ -294,11 +295,11 @@ async function loadOneOff(){
 $('ooAdd').onclick = async ()=>{
   const ymd = $('ooDate').value; const cid = $('ooClass').value
   if(!ymd){ alert('Selecciona fecha'); return }
-  await fetch('/session/oneoff',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ymd:ymd, class_id:cid})})
+  await fetch(`${API}/oneoff`,{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ymd:ymd, class_id:cid})})
   loadOneOff()
 }
 $('ooList').addEventListener('click', async (e)=>{
-  const del = e.target.getAttribute('data-oodel'); if(del){ await fetch('/session/oneoff/'+del, {method:'DELETE'}); loadOneOff() }
+  const del = e.target.getAttribute('data-oodel'); if(del){ await fetch(`${API}/oneoff/`+del, {method:'DELETE'}); loadOneOff() }
 })
 
 // Init
