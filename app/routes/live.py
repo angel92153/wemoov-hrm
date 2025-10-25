@@ -22,7 +22,6 @@ log = logging.getLogger(__name__)
 
 _sessions = SessionStore()
 
-
 # -------------------------
 # Helpers
 # -------------------------
@@ -58,20 +57,6 @@ def _class_is_active() -> bool:
             pass
 
     return False
-
-
-def _hr_max_effective(u: dict, fallback: int = 190) -> int:
-    hr_max = u.get("hr_max")
-    hr_max_auto = u.get("hr_max_auto", 1)
-    edad = u.get("edad")
-    if hr_max_auto == 0:
-        return int(hr_max) if hr_max is not None else fallback
-    if isinstance(edad, int) and edad > 0:
-        return int(round(208 - 0.7 * edad))
-    if hr_max is not None:
-        return int(hr_max)
-    return fallback
-
 
 def _to_ms(ts):
     if not isinstance(ts, (int, float)):

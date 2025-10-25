@@ -6,12 +6,11 @@ from .config import Config
 
 # Blueprints
 from .routes.dashboard import bp as dashboard_bp
-from .routes.sessions import bp as sessions_bp
 from .routes.users import bp as users_bp
 from .routes.live import bp as live_bp
 from .routes.compat import bp as compat_bp
-from .routes.control import bp as control_bp
 from .routes.api import bp as api_bp  # /api/unassigned_devices
+from .routes.control_api import bp as control_api_bp
 
 # DB inits
 from app.services.session_manager import init_db_with_defaults  # sessions.db
@@ -41,11 +40,10 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     # ----------------------------------
     app.register_blueprint(dashboard_bp)                      # "/"
     app.register_blueprint(users_bp,    url_prefix="/users")  # "/users/*"
-    app.register_blueprint(sessions_bp, url_prefix="/sessions")
     app.register_blueprint(live_bp)                           # "/live"
     app.register_blueprint(compat_bp)                         # "/session/status" (alias compat)
-    app.register_blueprint(control_bp)                        # "/control"
     app.register_blueprint(api_bp,      url_prefix="/api")    # "/api/*"
+    app.register_blueprint(control_api_bp)
 
     # ----------------------------------
     # Cabeceras de caché

@@ -91,7 +91,7 @@ async function loadClasses(){
   const status = $('classStatus')
   try{
     status.textContent = 'Cargando clases…'
-    const r = await fetch('/sessions/classes', { cache:'no-store' })
+    const r = await fetch('/control/classes', { cache:'no-store' })
     const raw = await r.json()
     // admite array directo o {classes: [...]}
     const list = Array.isArray(raw) ? raw : (Array.isArray(raw.classes) ? raw.classes : [])
@@ -137,7 +137,7 @@ $('startClass').onclick = async () => {
   try{
     $('startClass').disabled = true
     status.textContent = 'Iniciando clase…'
-    const r = await fetch('/sessions/start', {
+    const r = await fetch('/control/start', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ class_id: cid })
@@ -159,7 +159,7 @@ $('startClass').onclick = async () => {
 $('stopClass').onclick = async () => {
   const status = $('classStatus')
   try{
-    const r = await fetch('/sessions/stop', { method:'POST' })
+    const r = await fetch('/control/stop', { method:'POST' })
     if (r.ok){
       status.textContent = 'Sesión detenida.'
       await poll()
@@ -174,7 +174,7 @@ $('stopClass').onclick = async () => {
 /* ==================== POLL DE ESTADO ==================== */
 async function poll(){
   try{
-    const r = await fetch('/sessions/status', { cache:'no-store' })
+    const r = await fetch('/control/status', { cache:'no-store' })
     const j = await r.json()
     const t = $('timer'), info = $('info'), controls = $('controls'), hint = $('hint')
 
@@ -215,9 +215,9 @@ async function poll(){
 }
 
 /* ==================== CONTROLES ==================== */
-$('prev').onclick   = async ()=>{ await fetch('/sessions/prev',        {method:'POST'}); await poll(); }
-$('next').onclick   = async ()=>{ await fetch('/sessions/next',        {method:'POST'}); await poll(); }
-$('toggle').onclick = async ()=>{ await fetch('/sessions/toggle_pause',{method:'POST'}); await poll(); }
+$('prev').onclick   = async ()=>{ await fetch('/control/prev',        {method:'POST'}); await poll(); }
+$('next').onclick   = async ()=>{ await fetch('/control/next',        {method:'POST'}); await poll(); }
+$('toggle').onclick = async ()=>{ await fetch('/control/toggle_pause',{method:'POST'}); await poll(); }
 
 /* ==================== INIT ==================== */
 setInterval(poll, 1000)
