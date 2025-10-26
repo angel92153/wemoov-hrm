@@ -17,9 +17,10 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     # 1) Inicializa bases de datos y métricas dentro de app context
     with app.app_context():
         init_all()
-        # <<< NUEVO: inicializar métricas desde la config de Flask >>>
-        from app.services import metrics as MET
-        MET.init_from_app(app)
+        # Inicializar métricas desde la config de Flask
+        from app.services.metrics_core import init_from_app
+        init_from_app(app)
+
 
     # 2) Filtros Jinja
     register_template_filters(app)

@@ -5,12 +5,14 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from app.db.repos import UsersRepo
 from app.services.hrm.sim import SimHRProvider
-from app.services.metrics import (
+from app.services.session_store import (
     live_full_summary,
     clear_inactive_sessions,
     clear_sessions,
+    export_and_clear_sessions,
     _STORE,
 )
+from app.db.session_dump import dump_session_to_db
 
 # 🔸 Importa SESSION para leer phase/status (opcional)
 try:
@@ -274,9 +276,49 @@ def live():
     prev_active = getattr(current_app, "_LAST_SESSION_ACTIVE", None)
 
     if prev_active is False and session_active:
+        # inicio de sesión -> limpia residuos previos
         clear_sessions()
+
     if prev_active is True and not session_active:
-        clear_sessions()
+        # fin de sesión -> exporta a DB y limpia el store
+        def _persist_fn(data):
+            run_id = None
+            started_at_ms = None
+            meta = None
+            try:
+                status = st or {}
+                run_id = status.get("session_id") or status.get("id")
+                # intenta inferir inicio (ms)
+                for k in ("class_start_ms", "t0_ms"):
+                    v = status.get(k)
+                    if isinstance(v, int):
+                        started_at_ms = v
+                        break
+                if started_at_ms is None:
+                    # intenta parsear ISO
+                    for k in ("class_t0", "phase_t0"):
+                        v = status.get(k)
+                        if isinstance(v, str):
+                            try:
+                                started_at_ms = int(datetime.fromisoformat(v.replace("Z","+00:00"))
+                                                    .astimezone(timezone.utc).timestamp()*1000)
+                                break
+                            except Exception:
+                                pass
+                # opcional: guarda el status completo como metadatos
+                meta = json.dumps(status, separators=(',',':'))
+            except Exception:
+                pass
+
+            dump_session_to_db(
+                current_app.config["SESSIONS_DB_PATH"],
+                data,
+                run_id=run_id,
+                started_at_ms=started_at_ms,
+                ended_at_ms=int(time.time() * 1000),
+                meta_json=meta
+            )
+        export_and_clear_sessions(_persist_fn)
 
     current_app._LAST_SESSION_ACTIVE = session_active
 
@@ -325,7 +367,34 @@ def live_stream():
         if prev_active is False and session_active:
             clear_sessions()
         if prev_active is True and not session_active:
-            clear_sessions()
+            def _persist_fn(data):
+                status = _session_state() or {}
+                run_id = status.get("session_id") or status.get("id")
+                started_at_ms = None
+                for k in ("class_start_ms", "t0_ms"):
+                    v = status.get(k)
+                    if isinstance(v, int):
+                        started_at_ms = v
+                        break
+                if started_at_ms is None:
+                    for k in ("class_t0", "phase_t0"):
+                        v = status.get(k)
+                        if isinstance(v, str):
+                            try:
+                                started_at_ms = int(datetime.fromisoformat(v.replace("Z","+00:00"))
+                                                    .astimezone(timezone.utc).timestamp()*1000)
+                                break
+                            except Exception:
+                                pass
+                dump_session_to_db(
+                    current_app.config["SESSIONS_DB_PATH"],
+                    data,
+                    run_id=run_id,
+                    started_at_ms=started_at_ms,
+                    ended_at_ms=int(time.time() * 1000),
+                    meta_json=json.dumps(status, separators=(',',':'))
+                )
+            export_and_clear_sessions(_persist_fn)
         current_app._LAST_SESSION_ACTIVE = session_active
         return out
 

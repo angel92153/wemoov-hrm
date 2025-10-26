@@ -66,3 +66,6 @@ class Config:
     HR_HISTORY_SAMPLE_MIN_MS = int(os.environ.get("HR_HISTORY_SAMPLE_MIN_MS", "1000"))  # mínimo 1 muestra/s
     HR_HISTORY_MIN_DELTA = int(os.environ.get("HR_HISTORY_MIN_DELTA", "2"))          # guardar si cambia ≥2 bpm
     HR_HISTORY_ON_ZONE_CHANGE = bool(int(os.environ.get("HR_HISTORY_ON_ZONE_CHANGE", "1")))  # guardar si cambia de zona
+    HR_HISTORY_PURGE_ON_END = True
+
+    
