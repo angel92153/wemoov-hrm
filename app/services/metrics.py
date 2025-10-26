@@ -1,14 +1,17 @@
 # app/services/metrics.py
 from __future__ import annotations
 from datetime import datetime, date, timezone
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 
 # ─────────────────────────────────────────────────────────────
-# Variables globales (se cargan en init_from_app)
+# Variables globales (configurables vía init_from_app)
 # ─────────────────────────────────────────────────────────────
-KCAL_MODE = "gross"   # "net" | "gross"
-MET_REST  = 1.0       # MET basal (kcal/kg/h)
-_SESSION_MODE = "mixed"  # "cardio" | "strength" | "mixed"
+KCAL_MODE = "gross"        # "net" | "gross"
+MET_REST  = 1.0            # MET basal (kcal/kg/h)
+_SESSION_MODE = "mixed"    # "cardio" | "strength" | "mixed"
+
+# No retro-integrar huecos mayores a este umbral (ms)
+INTEGRATE_MAX_GAP_MS = 10000  # se sobreescribe en init_from_app con LIVE_INTEGRATE_MAX_GAP_MS
 
 # Zonas por %HRR (Karvonen)
 HRR_Z1 = 0.50  # <50% HRR
@@ -34,11 +37,11 @@ _MOOV_RATE: dict[str, float] = {
 }
 
 # Ajustes energéticos por intensidad (para SESSION_MODE="mixed"/"strength")
-MIXED_ADJ_Z5    = 1.20
-MIXED_ADJ_Z4    = 1.10
+MIXED_ADJ_Z5      = 1.20
+MIXED_ADJ_Z4      = 1.10
 MIXED_ADJ_REC_HRR = 0.90  # <50% HRR
 MIXED_ADJ_REC_HMX = 0.90  # <60% HRmax
-STRENGTH_ADJ    = 1.30
+STRENGTH_ADJ      = 1.30
 
 
 # ─────────────────────────────────────────────────────────────
@@ -82,12 +85,15 @@ def init_from_app(app) -> None:
     Cargar parámetros desde app.config UNA sola vez al arrancar la app.
     Requiere que se llame desde create_app() dentro de app.app_context().
     """
-    global KCAL_MODE, MET_REST, _SESSION_MODE
+    global KCAL_MODE, MET_REST, _SESSION_MODE, INTEGRATE_MAX_GAP_MS
     cfg = app.config
 
-    KCAL_MODE    = cfg.get("KCAL_MODE", "gross")
-    MET_REST     = float(cfg.get("MET_REST", 1.0))
+    KCAL_MODE     = cfg.get("KCAL_MODE", "gross")
+    MET_REST      = float(cfg.get("MET_REST", 1.0))
     _SESSION_MODE = cfg.get("SESSION_MODE", "mixed")
+
+    # ← umbral para evitar retro-integración de huecos largos
+    INTEGRATE_MAX_GAP_MS = int(cfg.get("LIVE_INTEGRATE_MAX_GAP_MS", 2000))
 
     configure_simple_points(
         target_points= int(cfg.get("MOOV_TARGET_POINTS", 3000)),
@@ -280,7 +286,7 @@ def moov_rate_per_min_from_zone(zone: str) -> float:
 
 
 # ─────────────────────────────────────────────────────────────
-# Sesión (integrador)
+# Sesión (integrador) — interno al módulo
 # ─────────────────────────────────────────────────────────────
 class _Sess:
     __slots__ = ("last_ts", "kcal_total", "moov_total")
@@ -316,7 +322,7 @@ class SessionStore:
             "hr_max": int?, "hr_rest": int?
         }
         """
-        # Edad: prioriza DOB
+        # Edad y HRmax
         edad = _edad_from_user(user)
         hr_max_user = user.get("hr_max") if user else None
         hr_max = hrmax_from_user_or_estimada(edad, hr_max_user)
@@ -339,19 +345,24 @@ class SessionStore:
         frac = frac_hrr(hr, hr_max, hr_rest) if method == "hrr" else frac_hrmax(hr, hr_max)
         zcode = zone_code_from_frac(frac, method)
 
-        # Integración temporal
+        # Integración temporal (si hay tiempo y HR)
         if ts and hr is not None:
             if sess.last_ts:
-                dt_min = max(0.0, (ts - sess.last_ts).total_seconds() / 60.0)
-                if dt_min > 0.0:
-                    # Kcal
-                    rate_kcal = kcal_per_min_total(hr, edad, peso, sexo, frac, method, mode)
-                    if rate_kcal > 0:
-                        sess.kcal_total += rate_kcal * dt_min
-                    # Puntos por ZONA
-                    rate_mp = moov_rate_per_min_from_zone(zcode)
-                    if rate_mp > 0:
-                        sess.moov_total += rate_mp * dt_min
+                # medimos el gap en ms para compararlo con el umbral
+                dt_ms = max(0.0, (ts - sess.last_ts).total_seconds() * 1000.0)
+                if dt_ms > 0:
+                    if dt_ms <= INTEGRATE_MAX_GAP_MS:
+                        dt_min = dt_ms / 60000.0
+                        # Kcal
+                        rate_kcal = kcal_per_min_total(hr, edad, peso, sexo, frac, method, mode)
+                        if rate_kcal > 0:
+                            sess.kcal_total += rate_kcal * dt_min
+                        # Puntos por ZONA
+                        rate_mp = moov_rate_per_min_from_zone(zcode)
+                        if rate_mp > 0:
+                            sess.moov_total += rate_mp * dt_min
+                    # else: gap grande → NO integramos ese tramo (evita retro-integración)
+            # avanzamos el last_ts siempre al nuevo sello temporal
             sess.last_ts = ts
 
         return {
@@ -361,3 +372,134 @@ class SessionStore:
             "kcal": round(sess.kcal_total, 3),
             "moov_points": round(sess.moov_total, 3),
         }
+
+
+# ─────────────────────────────────────────────────────────────
+# API pública para /live
+# ─────────────────────────────────────────────────────────────
+# Almacén interno opcional para integrar (kcal/pts) por dispositivo/usuario
+_STORE = SessionStore()
+
+def live_full_summary(hr: int | None,
+                      user: dict | None,
+                      *,
+                      dev_id: int | None = None,
+                      ts_iso: str | None = None,
+                      integrate: bool = True,
+                      mode: str | None = None) -> Dict[str, Any]:
+    """
+    Devuelve un dict listo para /live con:
+      - hr_max: HRmax de perfil o estimado (Tanaka)
+      - method: "hrr" | "hrmax"
+      - zone: "Z1".."Z5"
+      - kcal: acumuladas si integrate=True y dev_id+ts_iso; si no, por-minuto (kcal_per_min)
+      - moov_points: acumuladas si integrate=True; si no, rate por minuto (moov_rate_per_min)
+
+    integrate=True  → usa un integrador interno (SessionStore) con dev_id + ts_iso.
+    integrate=False → NO integra; devuelve rates por minuto.
+
+    Requisitos para integrar:
+      - dev_id no None
+      - ts_iso ISO válido (se usa para el paso de tiempo)
+    """
+    # Calcular hr_max y método con la lógica del módulo
+    edad = _edad_from_user(user)
+    hrmax_user = user.get("hr_max") if user else None
+    hr_max = hrmax_from_user_or_estimada(edad, hrmax_user)
+    method, hr_rest = pick_method(user)
+
+    # Integración con estado
+    if integrate and (dev_id is not None) and ts_iso:
+        res = _STORE.update(dev_id=dev_id, user=user or {}, hr=hr, ts_iso=ts_iso, mode=mode)
+        return {
+            "hr_max":      res.get("hr_max", hr_max),
+            "method":      res.get("method", method),
+            "zone":        res.get("zone", "Z1"),
+            "kcal":        float(res.get("kcal", 0.0)),
+            "moov_points": float(res.get("moov_points", 0.0)),
+        }
+
+    # Sin integración: devolver rates por minuto + zona
+    if hr is None:
+        frac = 0.0
+        zone = "Z1"
+    else:
+        frac = frac_hrr(hr, hr_max, hr_rest) if method == "hrr" else frac_hrmax(hr, hr_max)
+        zone = zone_code_from_frac(frac, method)
+
+    peso = user.get("peso") if user else None
+    sexo = user.get("sexo") if user else None
+    kcal_per_min = kcal_per_min_total(hr or 0, edad, peso, sexo, frac, method, mode)
+    moov_rate = moov_rate_per_min_from_zone(zone)
+
+    return {
+        "hr_max": hr_max,
+        "method": method,
+        "zone": zone,
+        "kcal_per_min": round(kcal_per_min, 3),
+        "moov_rate_per_min": round(moov_rate, 3),
+    }
+
+def zone_summary_for_live(hr: int | None, user: dict | None) -> Dict[str, Any]:
+    """
+    Resumen simple para cuando sólo quieres HRmax+zona (sin kcal/puntos).
+    """
+    edad = _edad_from_user(user)
+    hrmax_user = user.get("hr_max") if user else None
+    hr_max = hrmax_from_user_or_estimada(edad, hrmax_user)
+    method, hr_rest = pick_method(user)
+    if hr is None:
+        frac = 0.0
+        zone = "Z1"
+    else:
+        frac = frac_hrr(hr, hr_max, hr_rest) if method == "hrr" else frac_hrmax(hr, hr_max)
+        zone = zone_code_from_frac(frac, method)
+    return {
+        "hr_max": hr_max,
+        "zone": zone,
+        "method": method,
+    }
+
+# ─────────────────────────────────────────────────────────────
+# Utilidades de limpieza para /live
+# ─────────────────────────────────────────────────────────────
+def clear_sessions(dev_ids: set[int] | None = None) -> None:
+    """
+    Borra todas las sesiones si dev_ids=None; si no, sólo las de esos IDs.
+    """
+    if dev_ids is None:
+        _STORE.clear()
+        return
+    for did in list(dev_ids):
+        _STORE.clear(did)
+
+def clear_inactive_sessions(keep_ids: set[int], older_than_ms: int) -> int:
+    """
+    Borra sesiones cuyo dev_id NO está en keep_ids y cuyo last_ts es anterior a now-older_than_ms.
+    Devuelve el número de sesiones eliminadas.
+    """
+    if older_than_ms <= 0:
+        return 0
+    try:
+        now = datetime.now(timezone.utc)
+    except Exception:
+        return 0
+
+    removed = 0
+    items = list(_STORE._by_dev.items())
+    for dev_id, sess in items:
+        if dev_id in keep_ids:
+            continue
+        last = getattr(sess, "last_ts", None)
+        if last is None:
+            _STORE.clear(dev_id)
+            removed += 1
+            continue
+        try:
+            delta_ms = (now - last).total_seconds() * 1000.0
+        except Exception:
+            delta_ms = older_than_ms + 1
+        if delta_ms > older_than_ms:
+            _STORE.clear(dev_id)
+            removed += 1
+    return removed

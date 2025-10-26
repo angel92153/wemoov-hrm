@@ -39,40 +39,24 @@
     .topbar .left{ justify-self:start; display:flex; align-items:center; gap: 0.25ch; white-space: nowrap; min-width: 0; }
     .topbar .center{ justify-self:center; height:100%; display:flex; align-items:center; }
     .topbar .right {
-    justify-self: end;
-    display: flex;
-    align-items: center;
-
-    /* Reservamos espacio fijo para el reloj y un margen cómodo al borde */
-    --clock-ch: 8;                /* "00:00:00" → 8 caracteres */
-    --clock-right-gap: 88px;      /* margen con el borde (aumentado) */
-
-    width: calc(var(--clock-ch) * 1ch + var(--clock-right-gap));
-    padding-right: var(--clock-right-gap);
-    box-sizing: content-box;      /* asegura que el padding sume al ancho total */
-  }
-
-  /* Reloj alineado a la izquierda dentro de ese bloque */
-  .clock {
-    display: block;
-    width: calc(var(--clock-ch) * 1ch);
-    text-align: left;                 /* ← alineado a la izquierda */
-    font-family: "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
-    font-weight: 900;
-    line-height: 1;
-    letter-spacing: .03em;
-    white-space: nowrap;
-    text-shadow: 0 1px 2px rgba(0,0,0,.25);
-    font-variant-numeric: tabular-nums;
-    font-size: calc(var(--topbar-h) * 0.48);
-    color: #ffffff;
-  }
+      justify-self: end; display: flex; align-items: center;
+      --clock-ch: 8; --clock-right-gap: 88px;
+      width: calc(var(--clock-ch) * 1ch + var(--clock-right-gap));
+      padding-right: var(--clock-right-gap);
+      box-sizing: content-box;
+    }
+    .clock {
+      display: block; width: calc(var(--clock-ch) * 1ch); text-align: left;
+      font-family: "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
+      font-weight: 900; line-height: 1; letter-spacing: .03em; white-space: nowrap;
+      text-shadow: 0 1px 2px rgba(0,0,0,.25); font-variant-numeric: tabular-nums;
+      font-size: calc(var(--topbar-h) * 0.48); color: #ffffff;
+    }
 
     .phase, .timer, .clock {
       font-family: "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
       font-weight: 900; line-height: 1; letter-spacing: .03em; white-space: nowrap;
-      text-shadow: 0 1px 2px rgba(0,0,0,.25);
-      font-variant-numeric: tabular-nums;
+      text-shadow: 0 1px 2px rgba(0,0,0,.25); font-variant-numeric: tabular-nums;
       font-size: calc(var(--topbar-h) * 0.48);
     }
     .phase, .timer { color: var(--phase-color); }
@@ -142,6 +126,22 @@
   <div class="wrap"><div class="grid" id="grid"></div></div>
 
   <script>
+    // ====== Config desde backend (unificado) ======
+    let FADE_DURATION_MS = 60000; // fallback si /live/config falla
+    let LIVE_RECENT_MS = 5000;    // opcional, informativo/ajustes
+    (async () => {
+      try {
+        const r = await fetch('/live/config', { cache: 'no-store' });
+        if (r.ok) {
+          const cfg = await r.json();
+          if (cfg && typeof cfg.fade_ms === 'number') FADE_DURATION_MS = cfg.fade_ms;
+          if (cfg && typeof cfg.recent_ms === 'number') LIVE_RECENT_MS = cfg.recent_ms;
+        }
+      } catch (e) {
+        // silencioso: nos quedamos con los fallbacks
+      }
+    })();
+
     // ====== Reloj cabecera ======
     const clockEl = document.getElementById('clock');
     function updateClock(){
@@ -155,21 +155,19 @@
     const timerEl = document.getElementById('phaseTimer');
     function fmtMMSS(sec){ sec=Math.max(0,Math.floor(sec)); return `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`; }
     function setPhaseColor(hex){ document.documentElement.style.setProperty('--phase-color', hex||'#eab308'); }
-    // Estado sesión (alias backend)
+
     async function pollSession(){
       try{
         const res = await fetch('/control/status', { cache:'no-store' });
         const s = await res.json();
 
         if (!s.active && s.show_countdown){
-          // COUNTDOWN visible (manual o semanal)
           document.documentElement.style.setProperty('--phase-color', '#ffffff');
           const pausedSuffix = (s.countdown_paused ? ' · PAUSA' : '');
           phaseEl.textContent = 'COUNTDOWN' + pausedSuffix;
 
           timerEl.textContent = fmtMMSS(s.countdown_s || 0);
           timerEl.classList.remove('invisible');
-
           return;
         }
 
@@ -188,12 +186,12 @@
         timerEl.classList.add('invisible');
       }catch(e){}
     }
-
     setInterval(pollSession,1000); pollSession();
 
     // ====== HR Grid ======
     const POLL_MS = 1000, IDLE_POLL_MS = 5000, FETCH_TIMEOUT_MS = 8000, MAX_ERROR_BACKOFF_MS = 6000;
-    const FADE_DURATION_MS = 60000, MIN_BEAT_MS = 900;
+    let MIN_BEAT_MS = 900; // latido visual, no crítico
+
     const grid = document.getElementById('grid');
     const lastTs = new Map(), lastBeatAt = new Map(), cards = new Map();
     let nextTimer=null, errorBackoff=POLL_MS, abortCtrl=null, emptyMsgEl=null, beatIntervalId=null, useSSE=false, es=null;
@@ -204,7 +202,6 @@
 
     function layoutForCount(n){
       if (n <= 0){
-        // Sin layout explícito → la grid queda vacía y el fondo se ve negro
         grid.style.gridTemplateColumns = '';
         grid.style.gridTemplateRows = '';
         grid.style.justifyContent = 'center';
@@ -272,7 +269,6 @@
       const pctEl = card.querySelector('.pct'); if (pctEl) pctEl.textContent = (pct==null?'--%':`${pct}%`);
       const hrEl = card.querySelector(`#hr-${d.dev}`); if (hrEl) hrEl.textContent = (hr==null?'--':`${hr}`);
 
-      // NUEVO: actualizar kcal y puntos (si vienen en metrics)
       const kcal = (typeof m.kcal==='number') ? m.kcal : null;
       const pts  = (typeof m.points==='number') ? m.points : null;
       const kcalEl = card.querySelector(`#kcal-${d.dev}`);
@@ -282,41 +278,48 @@
     }
 
     function reconcile(list){
-    const now = Date.now();
-    const arr = Array.isArray(list) ? list : [];
-    const presentIds = new Set(arr.map(d => d.dev));
+      const now = Date.now();
+      const arr = Array.isArray(list) ? list : [];
+      const presentIds = new Set(arr.map(d => d.dev));
 
-    // crear/actualizar
-    arr.forEach(d => {
-      let entry = cards.get(d.dev);
-      if (!entry){
-        const el = buildCard(d);
-        cards.set(d.dev, { el, fadeStart: null });
-        grid.append(el);
-      }else{
-        updateCardContent(entry.el, d);
-        if (entry.fadeStart !== null){ entry.fadeStart = null; entry.el.style.opacity = '1'; }
-      }
-    });
+      // crear/actualizar
+      arr.forEach(d => {
+        let entry = cards.get(d.dev);
+        if (!entry){
+          const el = buildCard(d);
+          cards.set(d.dev, { el, fadeStart: null });
+          grid.append(el);
+        }else{
+          updateCardContent(entry.el, d);
+          if (entry.fadeStart !== null){ entry.fadeStart = null; entry.el.style.opacity = '1'; }
+        }
+      });
 
-    // desvanecer desaparecidos
-    for (const [dev, entry] of Array.from(cards.entries())){
-      if (!presentIds.has(dev)){
-        if (entry.fadeStart == null){ entry.fadeStart = now; const hrEl = entry.el.querySelector(`#hr-${dev}`); if (hrEl) hrEl.classList.remove('bump'); }
-        const p = Math.min(1, (now - entry.fadeStart) / FADE_DURATION_MS);
-        entry.el.style.opacity = String(1 - p);
-        if (p >= 1){ try { grid.removeChild(entry.el); } catch {} cards.delete(dev); lastTs.delete(dev); lastBeatAt.delete(dev); }
+      // desvanecer desaparecidos
+      for (const [dev, entry] of Array.from(cards.entries())){
+        if (!presentIds.has(dev)){
+          if (entry.fadeStart == null){
+            entry.fadeStart = now;
+            const hrEl = entry.el.querySelector(`#hr-${dev}`);
+            if (hrEl) hrEl.classList.remove('bump');
+          }
+          const p = Math.min(1, (now - entry.fadeStart) / FADE_DURATION_MS);
+          entry.el.style.opacity = String(1 - p);
+          if (p >= 1){
+            try { grid.removeChild(entry.el); } catch {}
+            cards.delete(dev); lastTs.delete(dev); lastBeatAt.delete(dev);
+          }
+        }
       }
+
+      const count = cards.size;
+      layoutForCount(count);
+
+      // guardar ts (sin latir)
+      arr.forEach(d=>{ const ts=d.ts||'', prev=lastTs.get(d.dev); if (ts && ts!==prev) lastTs.set(d.dev, ts); });
     }
 
-    // QUITAMOS el placeholder: no creamos nada cuando count===0
-    const count = cards.size;
-    layoutForCount(count);
-
-    // guardar ts (sin latir)
-    arr.forEach(d=>{ const ts=d.ts||'', prev=lastTs.get(d.dev); if (ts && ts!==prev) lastTs.set(d.dev, ts); });
-  }
-
+    // latido visual
     function bumpHR(devId){
       const entry = cards.get(devId);
       if (!entry || entry.fadeStart !== null) return;
@@ -330,13 +333,15 @@
     function scheduleNext(ms){ if (nextTimer) clearTimeout(nextTimer); nextTimer = setTimeout(tick, ms); }
     function signature(list){ if (!Array.isArray(list)||!list.length) return '[]'; return list.map(d=>`${d.dev}|${d.hr}|${d.ts}`).join(','); }
 
+    // ====== Fetch polling (fallback) ======
+    const POLL_URL = '/live?limit=16';
     async function fetchOnceAndRender() {
       if (document.hidden){ scheduleNext(IDLE_POLL_MS); return; }
       if (abortCtrl) abortCtrl.abort();
       abortCtrl = new AbortController();
       const timeout = setTimeout(()=>abortCtrl.abort(), FETCH_TIMEOUT_MS);
       try{
-        const res  = await fetch('/live?limit=16', { cache:'no-store', headers:{'Cache-Control':'no-store'}, signal:abortCtrl.signal });
+        const res  = await fetch(POLL_URL, { cache:'no-store', headers:{'Cache-Control':'no-store'}, signal:abortCtrl.signal });
         const list = await res.json();
         clearTimeout(timeout);
 
@@ -349,7 +354,6 @@
         scheduleNext(errorBackoff);
       }
     }
-
     function tick(){ if (!useSSE) fetchOnceAndRender(); }
 
     // ====== SSE con fallback ======
@@ -368,7 +372,6 @@
         if (!useSSE && !es) tick();
       }
     });
-
     window.addEventListener('resize', () => { layoutForCount(cards.size); });
 
     // LATIDO VISUAL
@@ -378,7 +381,7 @@
       for (const [dev, entry] of cards.entries()) { if (entry.fadeStart == null) bumpHR(dev); }
     }, 1000);
 
-    // Arranque
+    // ====== Arranque ======
     startSSE(); // intentamos stream; si falla, polling hará tick()
   </script>
 </body>

@@ -5,9 +5,13 @@ from datetime import datetime, timezone
 from typing import Any
 from app.db.repos import UsersRepo
 from app.services.hrm.sim import SimHRProvider
-from app.services.metrics import SessionStore
+from app.services.metrics import (
+    live_full_summary,
+    clear_inactive_sessions,
+    clear_sessions,
+)
 
-# 🔸 Importa SESSION para leer phase/status
+# 🔸 Importa SESSION para leer phase/status (opcional)
 try:
     from app.services.sessions_manager import SESSION
 except Exception:
@@ -23,7 +27,6 @@ except Exception:
 bp = Blueprint("live", __name__)
 log = logging.getLogger(__name__)
 
-_sessions = SessionStore()
 
 # -------------------------
 # Helpers
@@ -36,36 +39,13 @@ def _provider():
         current_app.config["_HR_PROVIDER_SINGLETON"] = prov
     return prov
 
-def _class_is_active() -> bool:
+def _session_state():
+    if SESSION is None:
+        return None
     try:
-        fn = current_app.config.get("SESSION_ACTIVE_FN")
-        if callable(fn):
-            return bool(fn())
+        return SESSION.status()
     except Exception:
-        pass
-
-    for key in ("_SESSION_ACTIVE", "CLASS_ACTIVE"):
-        if key in current_app.config:
-            try:
-                return bool(current_app.config.get(key))
-            except Exception:
-                pass
-
-    sess_cfg = current_app.config.get("SESSION")
-    if isinstance(sess_cfg, dict) and "active" in sess_cfg:
-        try:
-            return bool(sess_cfg.get("active"))
-        except Exception:
-            pass
-
-    try:
-        if SESSION is not None:
-            st = SESSION.status()
-            return bool(st.get("active"))
-    except Exception:
-        pass
-
-    return False
+        return None
 
 def _to_ms(ts):
     if not isinstance(ts, (int, float)):
@@ -115,16 +95,6 @@ def _reading_for_user(u: dict, prov, now_ms: int, recent_ms: int):
 def _now_iso_utc() -> str:
     return datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
-def _zone_from_bpm(hr: int, hr_max: int = 190) -> str:
-    if hr_max <= 0:
-        return "Z1"
-    p = hr / float(hr_max)
-    if p < 0.60: return "Z1"
-    if p < 0.70: return "Z2"
-    if p < 0.80: return "Z3"
-    if p < 0.90: return "Z4"
-    return "Z5"
-
 # ---------- Propagar fase al simulador ----------
 def _update_sim_phase(prov: Any) -> None:
     if SESSION is None:
@@ -171,13 +141,9 @@ def _build_live_snapshot(users_repo, prov, limit, recent_ms):
     except Exception:
         pass
 
-    try:
-        users = users_repo.list(limit=limit)
-    except Exception as e:
-        raise
-
+    users = users_repo.list(limit=limit)
     now_ms = int(time.time() * 1000)
-    out, seen_users, assigned_devs = [], set(), set()
+    out, assigned_devs, seen_users = [], set(), set()
 
     for u in users:
         dev = u.get("device_id")
@@ -189,16 +155,23 @@ def _build_live_snapshot(users_repo, prov, limit, recent_ms):
 
     for u in users:
         uid = int(u["id"])
-        seen_users.add(uid)
         apodo = (u.get("apodo") or f"{u.get('nombre','')} {u.get('apellido','')}".strip() or f"ID {uid}").strip()
         reading = _reading_for_user(u, prov, now_ms, recent_ms)
         if reading is None:
             continue
 
+        seen_users.add(uid)
         bpm = int(reading["bpm"])
         ts_iso = _now_iso_utc()
 
-        m = _sessions.update(dev_id=uid, user=u, hr=bpm, ts_iso=ts_iso)
+        # Resumen completo desde metrics, integrando (acumula kcal/pts por dev_id)
+        ms = live_full_summary(
+            hr=bpm,
+            user=u,
+            dev_id=uid,       # puedes cambiar a device_id si prefieres integrar por dispositivo real
+            ts_iso=ts_iso,
+            integrate=True,   # ← acumulados
+        )
 
         is_sim = int(u.get("is_sim") or 0) == 1
         device_id = u.get("device_id")
@@ -210,13 +183,14 @@ def _build_live_snapshot(users_repo, prov, limit, recent_ms):
             "ts": now_ms,
             "user": {"apodo": apodo},
             "metrics": {
-                "hr_max": m["hr_max"],
-                "zone": m["zone"],
-                "kcal": m["kcal"],
-                "points": m["moov_points"],
+                "hr_max": ms["hr_max"],
+                "zone": ms["zone"],
+                "kcal": ms.get("kcal"),
+                "points": ms.get("moov_points"),
             },
         })
 
+    # recent devices SIN usuario → sin integrar (solo hr_max/zone para que se vea que no hay user)
     try:
         recent_s = max(3, int(round(recent_ms / 1000)))
         seen = prov.recent_devices(recent=recent_s) if hasattr(prov, "recent_devices") else []
@@ -231,16 +205,17 @@ def _build_live_snapshot(users_repo, prov, limit, recent_ms):
             hr = int(d.get("hr") or 0)
             if hr <= 0:
                 continue
+
+            ms = live_full_summary(hr=hr, user=None, integrate=False)
+
             out.append({
                 "dev": dev_id,
                 "hr": hr,
                 "ts": now_ms,
                 "user": {"apodo": f"ID {dev_id}"},
                 "metrics": {
-                    "hr_max": 190,
-                    "zone": _zone_from_bpm(hr, 190),
-                    "kcal": None,
-                    "points": None,
+                    "hr_max": ms["hr_max"],
+                    "zone": ms["zone"],
                 },
             })
         except Exception:
@@ -264,7 +239,6 @@ def live():
     users_repo = UsersRepo(current_app.config["USERS_DB_PATH"])
     prov = _provider()
     recent_ms = int(current_app.config.get("LIVE_RECENT_MS", 5000))
-    class_active = _class_is_active()
 
     try:
         out, assigned_devs, seen_users, now_ms = _build_live_snapshot(
@@ -273,21 +247,38 @@ def live():
     except Exception as e:
         return jsonify({"error": "db_error", "message": str(e)}), 500
 
-    if not class_active:
-        GRACE_MS = 10_000
-        for dev_id, sess in list(_sessions._by_dev.items()):
-            last = getattr(sess, "last_ts", None)
-            if last is not None:
-                dt = (datetime.now(timezone.utc) - last).total_seconds() * 1000
-                if dt > GRACE_MS and dev_id not in seen_users:
-                    _sessions.clear(dev_id)
+    # === Política de resets ===
+    st = _session_state()
+    session_active = bool((st or {}).get("active"))
 
+    # Reset global al cambiar el estado de la clase
+    prev_active = getattr(current_app, "_LAST_SESSION_ACTIVE", None)
+
+    # NUEVO: inicio de clase (False -> True)
+    if prev_active is False and session_active:
+        clear_sessions()
+
+    # ya existente: fin de clase (True -> False)
+    if prev_active is True and not session_active:
+        clear_sessions()
+
+    current_app._LAST_SESSION_ACTIVE = session_active
+
+    # Reset por desconexión SOLO si no hay clase activa
+    if not session_active:
+        FADE_MS = int(current_app.config.get("LIVE_FADE_MS", 60000))  # mismo que el front
+        clear_inactive_sessions(keep_ids=seen_users, older_than_ms=FADE_MS)
+
+
+    # ETag y payload
     if with_status and SESSION is not None:
+        st_payload = st
         try:
-            st = SESSION.status()
+            if st_payload is None:
+                st_payload = SESSION.status()
         except Exception:
-            st = None
-        payload_obj = {"status": st, "data": out}
+            st_payload = None
+        payload_obj = {"status": st_payload, "data": out}
         payload = json.dumps(payload_obj, separators=(',', ':')).encode("utf-8")
     else:
         payload = json.dumps(out, separators=(',', ':')).encode("utf-8")
@@ -320,14 +311,9 @@ def live_stream():
         except Exception:
             pass
 
-        try:
-            users = users_repo.list(limit=limit)
-        except Exception as e:
-            raise e
-
-        class_active = _class_is_active()
+        users = users_repo.list(limit=limit)
         now_ms = int(time.time() * 1000)
-        out, assigned_devs = [], set()
+        out, assigned_devs, seen_users = [], set(), set()
 
         for u in users:
             dev = u.get("device_id")
@@ -337,20 +323,30 @@ def live_stream():
                 except Exception:
                     pass
 
+        # Estado de clase
+        st = _session_state()
+        session_active = bool((st or {}).get("active"))
+
+        # Usuarios con lectura válida → integrar
         for u in users:
             uid = int(u["id"])
             apodo = (u.get("apodo") or f"{u.get('nombre','') or ''} {u.get('apellido','') or ''}".strip() or f"ID {uid}").strip()
 
             reading = _reading_for_user(u, prov, now_ms, recent_ms)
             if reading is None:
-                if not class_active:
-                    _sessions.clear(uid)
                 continue
 
+            seen_users.add(uid)
             bpm = int(reading["bpm"])
             ts_iso = _now_iso_utc()
 
-            m = _sessions.update(dev_id=uid, user=u, hr=bpm, ts_iso=ts_iso)
+            ms = live_full_summary(
+                hr=bpm,
+                user=u,
+                dev_id=uid,
+                ts_iso=ts_iso,
+                integrate=True,
+            )
 
             is_sim = int(u.get("is_sim") or 0) == 1
             device_id = u.get("device_id")
@@ -362,13 +358,14 @@ def live_stream():
                 "ts": now_ms,
                 "user": {"apodo": apodo},
                 "metrics": {
-                    "hr_max": m["hr_max"],
-                    "zone": m["zone"],
-                    "kcal": m["kcal"],
-                    "points": m["moov_points"],
-                }
+                    "hr_max": ms["hr_max"],
+                    "zone": ms["zone"],
+                    "kcal": ms.get("kcal"),
+                    "points": ms.get("moov_points"),
+                },
             })
 
+        # recent devices SIN usuario → sin integrar
         try:
             recent_s = max(3, int(round(recent_ms / 1000)))
             seen = prov.recent_devices(recent=recent_s) if hasattr(prov, "recent_devices") else []
@@ -383,28 +380,48 @@ def live_stream():
                 hr = int(d.get("hr") or 0)
                 if hr <= 0:
                     continue
+
+                ms = live_full_summary(hr=hr, user=None, integrate=False)
+
                 out.append({
                     "dev": dev_id,
                     "hr": hr,
                     "ts": now_ms,
                     "user": {"apodo": f"ID {dev_id}"},
                     "metrics": {
-                        "hr_max": 190,
-                        "zone": _zone_from_bpm(hr, 190),
-                        "kcal": None,
-                        "points": None,
+                        "hr_max": ms["hr_max"],
+                        "zone": ms["zone"],
                     },
                 })
             except Exception:
                 continue
 
-        return out, now_ms
+        # Barrido por desconexión SOLO si no hay clase activa
+        if not session_active:
+            FADE_MS = int(current_app.config.get("LIVE_FADE_MS", 60000))
+            clear_inactive_sessions(keep_ids=seen_users, older_than_ms=FADE_MS)
+
+        # Reset global al cambiar el estado de la clase
+        prev_active = getattr(current_app, "_LAST_SESSION_ACTIVE", None)
+
+        # NUEVO: inicio de clase (False -> True)
+        if prev_active is False and session_active:
+            clear_sessions()
+
+        # ya existente: fin de clase (True -> False)
+        if prev_active is True and not session_active:
+            clear_sessions()
+
+        current_app._LAST_SESSION_ACTIVE = session_active
+
+
+        return out
 
     def gen():
         try:
             while True:
                 try:
-                    out, _ = build_once()
+                    out = build_once()
                 except Exception as e:
                     log.exception("live_stream db error: %s", e)
                     yield "data: []\n\n"
@@ -432,3 +449,15 @@ def live_stream():
 
     headers = {"Content-Type": "text/event-stream", "Cache-Control": "no-store", "Connection": "keep-alive"}
     return Response(stream_with_context(gen()), headers=headers)
+
+
+# -------------------------
+# /live/config → expone timings para el front (opcional)
+# -------------------------
+@bp.get("/live/config")
+def live_config():
+    """Devuelve valores de timing que el front puede usar (fade, etc.)."""
+    return jsonify({
+        "fade_ms": int(current_app.config.get("LIVE_FADE_MS", 60000)),
+        "recent_ms": int(current_app.config.get("LIVE_RECENT_MS", 5000)),
+    })
