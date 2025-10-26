@@ -18,7 +18,7 @@ from __future__ import annotations
 import time
 import datetime as dt
 import threading
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # ======================= CONFIGURACIÓN =======================
 ENABLE_WILDCARD_SCAN   = True
@@ -41,7 +41,7 @@ NETWORK_NUM   = 0x00
 NETWORK_KEY   = [0xB9,0xA5,0x21,0xFB,0xBD,0x72,0xC3,0x45]  # clave pública ANT+
 
 # Mantenimiento
-REAPER_SLEEP_S = 0.5
+REAPER_SLEEP_S = 0.8  # menos wakeups -> menos CPU
 
 # Verbose de depuración (True para flood de logs)
 VERBOSE        = False
@@ -49,13 +49,18 @@ VERBOSE        = False
 # ---------- Rearme y anti-latch (workaround para wildcard “pegajoso”) ----------
 # Rearma el wildcard tras promocionar y cuando detectamos que solo “vemos”
 # IDs ya dedicados durante varios ciclos.
-REARM_BACKOFF_S = 1.2            # mínimo entre rearms (debounce)
+REARM_BACKOFF_S = 3.0            # mínimo entre rearms (debounce) -> subido para menos ruido
 IGNORE_AFTER_REARM_S = 0.9       # ventana post-rearme para ignorar IDs ya dedicados
-IDLE_LATCH_HITS_THRESHOLD = 3    # si solo vemos dedicados N veces seguidas -> rearme
+IDLE_LATCH_HITS_THRESHOLD = 3    # si solo vemos dedicados N veces seguidas -> candidatos a rearme
+IDLE_GRACE_S = 10.0              # no rearme por idle-latch si hubo dev nuevo reciente
+MAX_IDLE_REARMS_PER_MIN = 6      # rate limit de rearms por idle-latch por minuto
 # ============================================================
 
 # ---------- Antirace / Debounce de promoción ----------
 PROMOTE_DEBOUNCE_S = 0.30        # no intentar promover el mismo dev dentro de esta ventana
+
+# ---------- Debounce de escritura de estado ----------
+MIN_STATE_UPDATE_INTERVAL_S = 0.4 # limita escrituras de state por dev para bajar lock/CPU
 
 monotonic = time.monotonic  # alias para tiempos relativos/intervalos
 
@@ -147,9 +152,17 @@ class AntDynamicManager:
         self._promoting = set()              # dev_ids en promoción en curso
         self._last_promoted_at: Dict[int, float] = {}  # dev_id -> monotonic (debounce)
 
+        # ---- Rate limit de rearms por idle-latch ----
+        self._idle_rearms_timestamps: List[float] = []
+
         # ---- IDs sintéticos para canales (cuando la lib no expone número) ----
         self._ch_seq = 0                     # contador de IDs sintéticos
         self._ch_ids: Dict[Any, int] = {}    # Channel -> synthetic_id
+
+        # ---- Timestamps para minimizar escrituras en state ----
+        self._last_state_write_mono: Dict[int, float] = {}  # dev_id -> monotonic
+        # ---- Último dev nuevo visto (para gracia de idle) ----
+        self._last_new_dev_mono: float = 0.0
 
     # ---------- helpers internos ----------
     def _assign_synth_id(self, ch) -> int:
@@ -160,6 +173,29 @@ class AntDynamicManager:
         sid = self._ch_seq
         self._ch_ids[ch] = sid
         return sid
+
+    def _rate_limit_idle_rearm(self, now_m: float) -> bool:
+        """Devuelve True si está permitido rearmar por idle-latch (aplica rate limit)."""
+        # purge de entradas viejas (más de 60 s)
+        self._idle_rearms_timestamps = [t for t in self._idle_rearms_timestamps if now_m - t < 60.0]
+        if len(self._idle_rearms_timestamps) >= MAX_IDLE_REARMS_PER_MIN:
+            return False
+        self._idle_rearms_timestamps.append(now_m)
+        return True
+
+    def _update_state(self, dev_id: int, hr: int, now_m: float):
+        """
+        Actualiza state[dev_id] con un mínimo intervalo entre escrituras
+        para reducir lock/CPU bajo ráfagas de paquetes.
+        """
+        last_w = self._last_state_write_mono.get(dev_id, 0.0)
+        if now_m - last_w < MIN_STATE_UPDATE_INTERVAL_S:
+            # Aun así, actualizamos last_seen para que el reaper no libere
+            self.last_seen[dev_id] = now_m
+            return
+        self.state[dev_id] = {"hr": hr, "ts": _now_iso()}
+        self.last_seen[dev_id] = now_m
+        self._last_state_write_mono[dev_id] = now_m
 
     # ---------- INIT ----------
     def _init_node(self):
@@ -191,10 +227,9 @@ class AntDynamicManager:
             if now_m < self._ignore_until_mono and already_dedicated:
                 return
 
-            # Actualiza estado y last_seen
+            # Actualiza estado y last_seen (con debounce de escritura)
             with self.lock:
-                self.state[dev_id] = {"hr": hr, "ts": _now_iso()}
-                self.last_seen[dev_id] = now_m
+                self._update_state(dev_id, hr, now_m)
 
             promoted = False
             with self.lock:
@@ -206,6 +241,8 @@ class AntDynamicManager:
                 # reset de histéresis al ver un no-dedicado
                 self._idle_latch_hits = 0
                 self._last_idle_seen_set = set()
+                # marcamos momento de "nuevo dev" (para gracia de idle)
+                self._last_new_dev_mono = now_m
             else:
                 # Solo vemos dedicados -> posible “idle-latch”
                 with self.lock:
@@ -217,8 +254,13 @@ class AntDynamicManager:
                     self._last_idle_seen_set = current_set
 
                 if (self._idle_latch_hits >= IDLE_LATCH_HITS_THRESHOLD
-                        and (now_m - self._last_scan_rearm_mono) > REARM_BACKOFF_S):
-                    self._schedule_rearm(now_m, "idle-latch")
+                        and (now_m - self._last_scan_rearm_mono) > REARM_BACKOFF_S
+                        and (now_m - self._last_new_dev_mono) > IDLE_GRACE_S):
+                    # aplica rate limit
+                    with self.lock:
+                        allowed = self._rate_limit_idle_rearm(now_m)
+                    if allowed:
+                        self._schedule_rearm(now_m, "idle-latch")
                     # deja el contador en 1 para evitar ráfagas
                     self._idle_latch_hits = 1
 
@@ -349,8 +391,7 @@ class AntDynamicManager:
                     if now_m2 < self._ignore_until_mono and already_dedicated:
                         return
                     with self.lock:
-                        self.state[dev_id] = {"hr": hr, "ts": _now_iso()}
-                        self.last_seen[dev_id] = now_m2
+                        self._update_state(dev_id, hr, now_m2)
                     promoted2 = False
                     with self.lock:
                         not_dedicated2 = (dev_id not in self.channels)
@@ -359,6 +400,7 @@ class AntDynamicManager:
                         promoted2 = True
                         self._idle_latch_hits = 0
                         self._last_idle_seen_set = set()
+                        self._last_new_dev_mono = now_m2
                     else:
                         with self.lock:
                             current_set = set(self.channels.keys())
@@ -368,8 +410,12 @@ class AntDynamicManager:
                             self._idle_latch_hits = 1
                             self._last_idle_seen_set = current_set
                         if (self._idle_latch_hits >= IDLE_LATCH_HITS_THRESHOLD
-                                and (now_m2 - self._last_scan_rearm_mono) > REARM_BACKOFF_S):
-                            self._schedule_rearm(now_m2, "idle-latch")
+                                and (now_m2 - self._last_scan_rearm_mono) > REARM_BACKOFF_S
+                                and (now_m2 - self._last_new_dev_mono) > IDLE_GRACE_S):
+                            with self.lock:
+                                allowed = self._rate_limit_idle_rearm(now_m2)
+                            if allowed:
+                                self._schedule_rearm(now_m2, "idle-latch")
                             self._idle_latch_hits = 1
                     if promoted2:
                         self._schedule_rearm(now_m2, "promoted")
@@ -426,9 +472,9 @@ class AntDynamicManager:
             pb = _to_bytes(payload)
             if len(pb) >= 8:
                 hr = int(pb[7])
+                now_m = monotonic()
                 with self.lock:
-                    self.state[dev_id] = {"hr": hr, "ts": _now_iso()}
-                    self.last_seen[dev_id] = monotonic()
+                    self._update_state(dev_id, hr, now_m)
         return _h
 
     def _maybe_promote(self, dev_id: int):
@@ -517,6 +563,7 @@ class AntDynamicManager:
             ch = self.channels.pop(dev_id, None)
             self.last_seen.pop(dev_id, None)
             self.state.pop(dev_id, None)
+            self._last_state_write_mono.pop(dev_id, None)
 
         if not ch:
             return

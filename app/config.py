@@ -64,8 +64,11 @@ class Config:
     HR_HISTORY_MAX_SAMPLES = int(os.environ.get("HR_HISTORY_MAX_SAMPLES", "4000"))   # ≈ 1h con 1/s
     HR_HISTORY_KEEP_MS = int(os.environ.get("HR_HISTORY_KEEP_MS", "3600000"))        # 1h en memoria
     HR_HISTORY_SAMPLE_MIN_MS = int(os.environ.get("HR_HISTORY_SAMPLE_MIN_MS", "1000"))  # mínimo 1 muestra/s
-    HR_HISTORY_MIN_DELTA = int(os.environ.get("HR_HISTORY_MIN_DELTA", "2"))          # guardar si cambia ≥2 bpm
+    HR_HISTORY_MIN_DELTA = int(os.environ.get("HR_HISTORY_MIN_DELTA", "1"))          # guardar si cambia ≥2 bpm
     HR_HISTORY_ON_ZONE_CHANGE = bool(int(os.environ.get("HR_HISTORY_ON_ZONE_CHANGE", "1")))  # guardar si cambia de zona
     HR_HISTORY_PURGE_ON_END = True
+    HISTORY_REPEAT_LAST_IF_IDLE = 1
+    SUMMARY_SHOW_MS = 600000  # 15s mostrando la tarjeta-resumen tras acabar la sesión
+
 
     

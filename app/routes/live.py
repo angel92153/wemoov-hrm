@@ -13,6 +13,7 @@ from app.services.session_store import (
     _STORE,
 )
 from app.db.session_dump import dump_session_to_db
+from app.db.summary_query import load_last_run_summary  # ⬅️ NUEVO
 
 # 🔸 Importa SESSION para leer phase/status (opcional)
 try:
@@ -437,6 +438,7 @@ def live_config():
     return jsonify({
         "fade_ms": int(current_app.config.get("LIVE_FADE_MS", 60000)),
         "recent_ms": int(current_app.config.get("LIVE_RECENT_MS", 5000)),
+        "summary_ms": int(current_app.config.get("SUMMARY_SHOW_MS", 15000)),  # ⬅️ NUEVO
     })
 
 
@@ -476,3 +478,31 @@ def live_zone_timeline():
         "now_ms": now_ms,
         "timeline": buckets,
     })
+
+
+# -------------------------
+# /live/summary (post-session)
+# -------------------------
+@bp.get("/live/summary")
+def live_summary():
+    """
+    Devuelve el resumen de la ÚLTIMA sesión guardada en DB:
+      - %HRmax medio de sesión (pct_avg)
+      - kcal y puntos totales
+      - timeline bucketizada con 'zone_mode' y 'frac' (0..1) para relieve
+    """
+    users_repo = UsersRepo(current_app.config["USERS_DB_PATH"])
+    try:
+        bucket_ms = int(request.args.get("bucket_ms", "5000"))
+    except Exception:
+        bucket_ms = 5000
+
+    try:
+        data = load_last_run_summary(
+            current_app.config["SESSIONS_DB_PATH"],
+            users_repo,
+            bucket_ms=bucket_ms
+        )
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": "summary_error", "message": str(e)}), 500

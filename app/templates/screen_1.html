@@ -21,12 +21,15 @@
       --topbar-h: 76px;
       --phase-color: #eab308;
 
-       /* grosor de la barra de zona */
+      /* grosor de la barra de zona */
       --zonebar-h: 14px;
-      
+
       /* línea separadora */
       --zonebar-sep-color: #000000;
       --zonebar-sep-h: 2px;
+
+      /* márgenes laterales del contenido central */
+      --inner-side-gap: 6%;
     }
 
     *{box-sizing:border-box}
@@ -87,9 +90,9 @@
       transition:opacity .6s ease, transform .3s ease, box-shadow .3s ease;
       container-type:size;
       color:#fff;
-      --base-nick:56px; --base-pct:64px; --base-metric:30px; --base-icon:30px;
+      --base-nick:56px; --base-pct:56px; --base-metric:30px; --base-icon:30px;
       --fs-nick:max(var(--base-nick),10cqmin);
-      --fs-pct:max(var(--base-pct),18cqmin);
+      --fs-pct: var(--fs-nick); /* ⬅️ el % escala igual que el nombre */
       --fs-metric:max(var(--base-metric),7cqmin);
       --icon-size:max(var(--base-icon),5cqmin);
     }
@@ -100,36 +103,16 @@
     .z4{background: linear-gradient(135deg, #7c3aed, #9333ea)}
     .z5{background:linear-gradient(135deg,#b91c1c,#ef4444)}
 
-    .zonebar {
-      position: absolute;
-      inset: 0 0 auto 0;
-      height: var(--zonebar-h);
-      width: 100%;
-      display: block;
-      border-top-left-radius: 16px;
-      border-top-right-radius: 16px;
-      opacity: .95;
-      pointer-events: none;
-    }
-
-    /* 🔹 línea negra separadora justo debajo */
-    .zonebar::after {
-      content: "";
-      position: absolute;
-      bottom: -var(--zonebar-sep-h);
-      left: 0;
-      width: 100%;
-      height: var(--zonebar-sep-h);
-      background: var(--zonebar-sep-color);
-      border-bottom-left-radius: 16px;
-      border-bottom-right-radius: 16px;
-    }
-
-    /* 🔧 NUEVO: ocultar completamente la barra cuando no hay sesión */
-    .zonebar.hidden { display: none; }
+    /* Barra de zona superior */
+    .zonebar { position:absolute; inset:0 0 auto 0; height: var(--zonebar-h); width:100%; display:block; border-top-left-radius:16px; border-top-right-radius:16px; background:#000; opacity:1; z-index:3; pointer-events:none; }
+    .zonebar::after { content:""; position:absolute; bottom:-var(--zonebar-sep-h); left:0; width:100%; height:var(--zonebar-sep-h); background: var(--zonebar-sep-color); border-bottom-left-radius:16px; border-bottom-right-radius:16px; z-index:4; }
+    .zonebar.hidden { display:none; }
 
     .nick{ position:absolute; top:10px; left:50%; transform:translateX(-50%); font-family:var(--font-nick); font-weight:800; letter-spacing:.02em; font-size:var(--fs-nick); text-shadow:0 1px 2px rgba(0,0,0,.25); white-space:nowrap; }
-    .pct{font-family:var(--font-pct);font-size:var(--fs-pct);font-weight:900;line-height:1;text-shadow:0 4px 10px rgba(0,0,0,.35);text-align:center}
+
+    /* % grande sin cuadrado ni transiciones; escala como el nick */
+    .pct{ font-family:var(--font-pct); font-size:var(--fs-pct); font-weight:900; line-height:1; text-shadow:0 4px 10px rgba(0,0,0,.35); text-align:center; font-variant-numeric: tabular-nums; }
+
     .metric{display:flex;align-items:center;gap:8px;font-family:var(--font-metric);font-size:var(--fs-metric);font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.25)}
     .metric .icon{display:inline-flex;width:var(--icon-size);height:var(--icon-size)}
     .metric .icon svg{width:100%;height:100%;fill:currentColor}
@@ -137,11 +120,10 @@
     .kcal{position:absolute;bottom:10px;left:50%;transform:translateX(-50%)}
     .moov{position:absolute;bottom:10px;right:12px}
 
-    @keyframes thump{0%{transform:scale(1)}30%{transform:scale(1.15)}60%{transform:scale(1)}100%{transform:scale(1)}}
-    .bump{animation:thump .18s ease-in-out}
+    .summarybar{ box-shadow: inset 0 2px 8px rgba(0,0,0,.35), 0 10px 24px rgba(0,0,0,.25); border-radius: 10px; }
 
     .empty{color:#9aa3b2;text-align:center;padding:24px;border:1px dashed #2c3350;border-radius:12px}
-    @media (prefers-reduced-motion: reduce){.card,.grid{transition:none}.bump{animation:none}}
+    @media (prefers-reduced-motion: reduce){.card,.grid{transition:none}}
   </style>
 </head>
 <body>
@@ -165,6 +147,13 @@
     // ====== Config desde backend (unificado) ======
     let FADE_DURATION_MS = 60000;
     let LIVE_RECENT_MS = 5000;
+
+    // ====== Resumen post-sesión ======
+    let SUMMARY_MS = 15000;          // se sobreescribe desde /live/config
+    let SUMMARY_MODE = false;        // bloquea reconcile() y muestra tarjetas de resumen
+    let SUMMARY_TIMER = null;        // timeout para salir del modo resumen
+    const summaryBars = new Map();   // dev -> canvas del relieve
+
     (async () => {
       try {
         const r = await fetch('/live/config', { cache: 'no-store' });
@@ -172,6 +161,7 @@
           const cfg = await r.json();
           if (cfg && typeof cfg.fade_ms === 'number') FADE_DURATION_MS = cfg.fade_ms;
           if (cfg && typeof cfg.recent_ms === 'number') LIVE_RECENT_MS = cfg.recent_ms;
+          if (cfg && typeof cfg.summary_ms === 'number') SUMMARY_MS = cfg.summary_ms; // ⬅️ nuevo
         }
       } catch {}
     })();
@@ -192,7 +182,7 @@
 
     // Zona timeline params
     const ZONELINE_BUCKET_MS  = 5000;      // 5s
-    const ZONELINE_WINDOW_MS  = 3600000;   // 1h (pedimos 1h; el backend/keep_ms limitará)
+    const ZONELINE_WINDOW_MS  = 3600000;   // 1h (el backend limitará por KEEP_MS)
     const ZONELINE_REFRESH_MS = 10000;     // 10s
 
     function fmtMMSS(sec){ sec=Math.max(0,Math.floor(sec)); return `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`; }
@@ -208,7 +198,7 @@
       }
     }
 
-    // 🔧 NUEVO: utilidades para limpiar/ocultar/mostrar zonebars
+    // 🔧 utilidades para limpiar/ocultar/mostrar zonebars
     function clearCanvas(cnv){
       const ctx = cnv.getContext('2d');
       if (!ctx) return;
@@ -232,6 +222,151 @@
       }
     }
 
+    // ====== Modo Resumen ======
+    function renderReliefBar(canvas, timeline, bucket_ms){
+      if (!Array.isArray(timeline) || timeline.length === 0) return;
+
+      const dpr = window.devicePixelRatio || 1;
+      const widthCSS  = canvas.clientWidth  || canvas.parentElement.clientWidth || 420;
+      const heightCSS = canvas.clientHeight || Math.max(120, (canvas.parentElement?.clientHeight || 200) * 0.6);
+      canvas.width  = Math.max(1, Math.floor(widthCSS  * dpr));
+      canvas.height = Math.max(1, Math.floor(heightCSS * dpr));
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      const firstT = timeline[0].t;
+      const lastT  = (timeline[timeline.length - 1].t) + (bucket_ms || 1);
+      const span   = Math.max(bucket_ms || 1, lastT - firstT);
+
+      const toX = (t) => {
+        const p = (t - firstT) / span;
+        return Math.max(0, Math.min(canvas.width, Math.round(p * canvas.width)));
+      };
+
+      for (const b of timeline){
+        const t0 = b.t, t1 = t0 + bucket_ms;
+        const x0 = toX(t0), x1 = toX(t1);
+        if (x1 <= 0 || x0 >= canvas.width) continue;
+        const w = Math.max(1, x1 - x0);
+
+        const frac = Math.max(0, Math.min(1, Number(b.frac) || 0));
+        const h = Math.round(frac * canvas.height);
+        const y = canvas.height - h; // bajas abajo, altas arriba
+
+        const z = b.zone_mode || 'Z1';
+        ctx.fillStyle = zoneColor(z);
+        ctx.fillRect(x0, y, w, h);
+      }
+    }
+
+    function buildSummaryCard(dev, apodo, metrics, timeline, bucket_ms){
+      // base card “vacía” con los totales
+      const d = {
+        dev,
+        user: { apodo },
+        hr: null,
+        metrics: {
+          hr_max: null,
+          zone: 'Z1',
+          kcal: metrics?.kcal ?? null,
+          points: metrics?.points ?? null
+        }
+      };
+      const card = buildCard(d);
+
+      // Oculta barra superior y % central
+      const zc = zoneBars.get(dev);
+      if (zc){ zc.classList.add('hidden'); clearCanvas(zc); }
+
+      const pctEl = card.querySelector('.pct');
+      if (pctEl){ pctEl.textContent = ''; }
+
+      // Sustituye bpm por %HRmax medio
+      const pctAvg = Number(metrics?.pct_avg ?? 0);
+      const hrEl = card.querySelector(`#hr-${dev}`);
+      if (hrEl){ hrEl.textContent = `${Math.round(pctAvg)}%`; }
+
+      // Canvas central con relieve
+      const relief = document.createElement('canvas');
+      relief.className = 'summarybar';
+      relief.style.position = 'absolute';
+      relief.style.left = '6%';
+      relief.style.right = '6%';
+      relief.style.opacity = '0.95';
+      relief.style.borderRadius = '10px';
+
+      card.appendChild(relief);
+      summaryBars.set(dev, relief);
+
+      // Guardamos payload para repintar en resize
+      relief._summaryPayload = { timeline: Array.isArray(timeline) ? timeline : [], bucket_ms: bucket_ms || 5000 };
+      renderReliefBar(relief, relief._summaryPayload.timeline, relief._summaryPayload.bucket_ms);
+
+      layoutSummaryCanvasForCard(card, relief);
+
+      return card;
+    }
+
+    function redrawAllSummaryBars(){
+      for (const [dev, cnv] of summaryBars.entries()){
+        const data = cnv._summaryPayload;
+        if (data){
+          renderReliefBar(cnv, data.timeline || [], data.bucket_ms || 5000);
+        }
+      }
+    }
+
+    async function startSummaryMode(){
+      if (SUMMARY_MODE) return;
+      SUMMARY_MODE = true;
+
+      // Pedimos el resumen al backend
+      let data = null;
+      try{
+        const r = await fetch('/live/summary?bucket_ms=5000', { cache:'no-store' });
+        data = r.ok ? await r.json() : null;
+      }catch{}
+
+      // Limpiamos grid y estados
+      grid.innerHTML = '';
+      cards.clear(); lastTs.clear(); lastBeatAt.clear();
+      zoneBars.clear(); zoneBarState.clear();
+      summaryBars.clear();
+
+      if (!data || !Array.isArray(data.devices) || data.devices.length === 0){
+        stopSummaryMode(0);
+        return;
+      }
+
+      // Construye tarjetas de resumen
+      for (const devRow of data.devices){
+        const dev = devRow.dev;
+        const apodo = (devRow.user && devRow.user.apodo) || `ID ${dev}`;
+        const m = devRow.metrics || {};
+        const tl = Array.isArray(devRow.timeline) ? devRow.timeline : [];
+        const card = buildSummaryCard(dev, apodo, m, tl, 5000);
+        grid.appendChild(card);
+        cards.set(dev, { el: card, fadeStart: null });
+      }
+
+      layoutForCount(cards.size);
+      stopSummaryMode(SUMMARY_MS);
+    }
+
+    function stopSummaryMode(delayMs){
+      if (SUMMARY_TIMER) clearTimeout(SUMMARY_TIMER);
+      SUMMARY_TIMER = setTimeout(() => {
+        SUMMARY_MODE = false;
+        grid.innerHTML = '';
+        cards.clear(); lastTs.clear(); lastBeatAt.clear();
+        zoneBars.clear(); zoneBarState.clear();
+        summaryBars.clear();
+      }, Math.max(0, Number(delayMs) || 0));
+    }
+
+    // ========= POLL de estado de sesión =========
     async function pollSession(){
       try{
         const res = await fetch('/control/status', { cache:'no-store' });
@@ -246,7 +381,7 @@
           timerEl.textContent = fmtMMSS(s.countdown_s || 0);
           timerEl.classList.remove('invisible');
           ensureZoneLineTimer(false);
-          setZoneBarsVisible(false); // 🔧 ocultar barra en countdown sin sesión
+          setZoneBarsVisible(false);
           return;
         }
 
@@ -257,8 +392,9 @@
           timerEl.classList.remove('invisible');
           ensureZoneLineTimer(true);
           if (!wasActive && SESSION_ACTIVE){
-            setZoneBarsVisible(true);     // 🔧 mostrar/redibujar al arrancar
-            refreshAllZoneBars();         // refresco inmediato
+            setZoneBarsVisible(true);
+            refreshAllZoneBars();
+            if (SUMMARY_MODE) stopSummaryMode(0); // si veníamos de resumen, lo quitamos
           }
           return;
         }
@@ -269,23 +405,26 @@
         timerEl.textContent = '00:00';
         timerEl.classList.add('invisible');
         ensureZoneLineTimer(false);
-        setZoneBarsVisible(false);        // 🔧 limpiar y ocultar al terminar sesión
+        setZoneBarsVisible(false);
+
+        // Transición de activa -> inactiva: arrancar resumen
+        if (wasActive && !SESSION_ACTIVE){
+          startSummaryMode();
+        }
       }catch(e){
         ensureZoneLineTimer(false);
-        setZoneBarsVisible(false);        // 🔧 ante error, mejor ocultar
+        setZoneBarsVisible(false);
       }
     }
     setInterval(pollSession,1000); pollSession();
 
     // ====== HR Grid ======
     const POLL_MS = 1000, IDLE_POLL_MS = 5000, FETCH_TIMEOUT_MS = 8000, MAX_ERROR_BACKOFF_MS = 6000;
-    let MIN_BEAT_MS = 900;
-
     const grid = document.getElementById('grid');
-    const lastTs = new Map(), lastBeatAt = new Map(), cards = new Map();
-    const zoneBars = new Map();      // dev -> canvas
+    const lastTs = new Map(), cards = new Map();
+    const zoneBars = new Map();      // dev -> canvas (barra superior)
     const zoneBarState = new Map();  // dev -> { lastAnchor, lastLen }
-    let nextTimer=null, errorBackoff=POLL_MS, abortCtrl=null, beatIntervalId=null, useSSE=false, es=null;
+    let nextTimer=null, errorBackoff=POLL_MS, abortCtrl=null, useSSE=false, es=null;
 
     const zoneClass = z => ({ Z1:'z1', Z2:'z2', Z3:'z3', Z4:'z4', Z5:'z5' })[z] || 'z1';
     const zoneColor = z => ({
@@ -329,11 +468,11 @@
       const card=document.createElement('div');
       card.className=`card ${zoneClass(zone)}`; card.style.opacity='1';
 
-      // zona timeline bar
+      // barra superior (zona)
       const zc = document.createElement('canvas');
       zc.className = 'zonebar';
-      zc.dataset.dev = d.dev;                     // 🔧 para redibujar por dev
-      if (!SESSION_ACTIVE) zc.classList.add('hidden'); // 🔧 oculto si no hay sesión
+      zc.dataset.dev = d.dev;
+      if (!SESSION_ACTIVE) zc.classList.add('hidden');
       card.appendChild(zc);
       zoneBars.set(d.dev, zc);
 
@@ -386,6 +525,8 @@
     }
 
     function reconcile(list){
+      if (SUMMARY_MODE) return; // no tocar tarjetas durante el modo resumen
+
       const now = Date.now();
       const arr = Array.isArray(list) ? list : [];
       const presentIds = new Set(arr.map(d => d.dev));
@@ -408,14 +549,12 @@
         if (!presentIds.has(dev)){
           if (entry.fadeStart == null){
             entry.fadeStart = now;
-            const hrEl = entry.el.querySelector(`#hr-${dev}`);
-            if (hrEl) hrEl.classList.remove('bump');
           }
           const p = Math.min(1, (now - entry.fadeStart) / FADE_DURATION_MS);
           entry.el.style.opacity = String(1 - p);
           if (p >= 1){
             try { grid.removeChild(entry.el); } catch {}
-            cards.delete(dev); lastTs.delete(dev); lastBeatAt.delete(dev);
+            cards.delete(dev); lastTs.delete(dev);
             zoneBars.delete(dev); zoneBarState.delete(dev);
           }
         }
@@ -424,24 +563,13 @@
       const count = cards.size;
       layoutForCount(count);
 
-      // guardar ts (sin latir)
+      // guardar ts
       arr.forEach(d=>{ const ts=d.ts||'', prev=lastTs.get(d.dev); if (ts && ts!==prev) lastTs.set(d.dev, ts); });
 
       // si hay sesión activa, refrescamos zona del recién llegado
       if (SESSION_ACTIVE){
         arr.forEach(d => drawZoneBarForDev(d.dev));
       }
-    }
-
-    // latido visual
-    function bumpHR(devId){
-      const entry = cards.get(devId);
-      if (!entry || entry.fadeStart !== null) return;
-      const now = performance.now(), last = lastBeatAt.get(devId) || 0;
-      if (now - last < MIN_BEAT_MS) return;
-      const el=document.getElementById(`hr-${devId}`); if (!el) return;
-      el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump');
-      lastBeatAt.set(devId, now);
     }
 
     function scheduleNext(ms){ if (nextTimer) clearTimeout(nextTimer); nextTimer = setTimeout(tick, ms); }
@@ -484,20 +612,21 @@
       if (!document.hidden){
         if (nextTimer) clearTimeout(nextTimer);
         if (!useSSE && !es) tick();
-        if (SESSION_ACTIVE) refreshAllZoneBars();
+        if (SUMMARY_MODE){
+          redrawAllSummaryBars();
+        }else if (SESSION_ACTIVE){
+          refreshAllZoneBars();
+        }
       }
     });
     window.addEventListener('resize', () => {
       layoutForCount(cards.size);
-      if (SESSION_ACTIVE) refreshAllZoneBars(); // re-render para ajustar anchuras
+      if (SUMMARY_MODE){
+        redrawAllSummaryBars();
+      } else if (SESSION_ACTIVE) {
+        refreshAllZoneBars(); // re-render para ajustar anchuras
+      }
     });
-
-    // LATIDO VISUAL
-    if (beatIntervalId) clearInterval(beatIntervalId);
-    beatIntervalId = setInterval(() => {
-      if (document.hidden) return;
-      for (const [dev, entry] of cards.entries()) { if (entry.fadeStart == null) bumpHR(dev); }
-    }, 1000);
 
     // ====== Zona timeline helpers (ANCLADO AL INICIO) ======
     async function drawZoneBarForDev(dev){
@@ -513,43 +642,66 @@
       }catch{}
     }
 
-    function renderZoneBar(canvas, payload){
+    function renderZoneBar(canvas, payload) {
       if (!payload || !Array.isArray(payload.timeline) || payload.timeline.length === 0) return;
       const { bucket_ms, timeline } = payload;
 
-      // Anclamos al primer bucket y extendemos hasta el final del último bucket
+      // Anclamos al primer bucket y extendemos hasta el final del último
       const firstT = timeline[0].t;
       const lastT  = timeline[timeline.length - 1].t + bucket_ms;
-      const span   = Math.max(bucket_ms || 1, lastT - firstT); // con 1 bucket: llena todo
+      const span   = Math.max(bucket_ms || 1, lastT - firstT);
 
-      // DPR & tamaño canvas
+      // DPR y tamaño canvas
       const dpr = window.devicePixelRatio || 1;
-      const widthCSS  = canvas.clientWidth  || canvas.parentElement.clientWidth || 300;
+      const widthCSS  = canvas.clientWidth  || canvas.parentElement.clientWidth  || 300;
       const heightCSS = canvas.clientHeight || parseInt(getComputedStyle(document.documentElement).getPropertyValue('--zonebar-h')) || 14;
       canvas.width  = Math.max(1, Math.floor(widthCSS  * dpr));
       canvas.height = Math.max(1, Math.floor(heightCSS * dpr));
 
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-      ctx.clearRect(0,0,canvas.width,canvas.height);
 
-      // Mapeo tiempo → x: siempre de izquierda (primer bucket) a derecha (último bucket)
+      // Fondo negro opaco (para cubrir degradado de la tarjeta)
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Mapeo tiempo → coordenada X
       const toX = (t) => {
-        const p = (t - firstT) / span;        // 0..1 sobre lo disponible
-        return Math.max(0, Math.min(canvas.width, Math.round(p * canvas.width)));
+        const p = (t - firstT) / span;
+        return Math.max(0, Math.min(canvas.width, p * canvas.width));
       };
 
-      // Dibuja bloques contiguos
-      for (const item of timeline){
+      // ---- Pintado continuo (sin huecos por redondeo) ----
+      const totalW = canvas.width;
+      let prevRight = 0;
+
+      for (let i = 0; i < timeline.length; i++) {
+        const item = timeline[i];
         const t0 = item.t;
         const t1 = t0 + bucket_ms;
         const z  = item.zone_mode || 'Z1';
+
+        // Borde izquierdo y derecho del bucket
         const x0 = toX(t0);
         const x1 = toX(t1);
-        if (x1 <= 0 || x0 >= canvas.width) continue;
-        const w = Math.max(1, x1 - x0);
-        ctx.fillStyle = zoneColor(z);
-        ctx.fillRect(x0, 0, w, canvas.height);
+
+        // Redondeo estable y continuidad
+        const startX = Math.max(prevRight, Math.floor(x0));
+        const segRight = Math.min(totalW, Math.ceil(x1));
+
+        // Si hay hueco real entre buckets (datos faltantes), lo dejamos negro
+        if (segRight > startX) {
+          ctx.fillStyle = zoneColor(z);
+          ctx.fillRect(startX, 0, segRight - startX + 1, canvas.height);
+        }
+
+        prevRight = segRight;
+      }
+
+      // Asegura cubrir el último píxel si quedó 1px de margen
+      if (prevRight < totalW) {
+        ctx.fillRect(totalW - 1, 0, 1, canvas.height);
       }
     }
 

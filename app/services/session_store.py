@@ -9,7 +9,7 @@ from .metrics_core import (
     # Config/globales
     INTEGRATE_MAX_GAP_MS,
     HR_HISTORY_ENABLED, HR_HISTORY_MAX_SAMPLES, HR_HISTORY_KEEP_MS,
-    HR_HISTORY_SAMPLE_MIN_MS, HR_HISTORY_MIN_DELTA, HR_HISTORY_ON_ZONE_CHANGE, HISTORY_PURGE_ON_SESSION_END,
+    HR_HISTORY_SAMPLE_MIN_MS, HR_HISTORY_MIN_DELTA, HR_HISTORY_ON_ZONE_CHANGE, HISTORY_PURGE_ON_SESSION_END, HISTORY_REPEAT_LAST_IF_IDLE,
     # Utilidades
     _edad_from_user, hrmax_from_user_or_estimada, pick_method,
     frac_hrr, frac_hrmax, zone_code_from_frac, _zone_to_int, _int_to_zone,
@@ -143,17 +143,14 @@ class SessionStore:
         return out
 
     def get_history_buckets(self, dev_id: int, *, bucket_ms: int = 5000,
-                            since_ms: int | None = None, max_points: int | None = None) -> List[Dict[str, Any]]:
-        """
-        Agrupa en ventanas de bucket_ms (p.ej. 5s) devolviendo:
-          { t: bucket_start_ms, hr_avg, hr_min, hr_max, count, zone_mode }
-        """
+                        since_ms: int | None = None, max_points: int | None = None) -> List[Dict[str, Any]]:
         rows = self.get_history(dev_id, since_ms=since_ms, as_iso=False)
         if not rows:
             return []
         if bucket_ms <= 0:
             bucket_ms = 5000
 
+        # 1) Agrega las muestras existentes por bucket
         buckets: Dict[int, Dict[str, Any]] = {}
         for r in rows:
             ts = int(r["ts"])
@@ -163,13 +160,63 @@ class SessionStore:
             t0 = (ts // bucket_ms) * bucket_ms
             b = buckets.get(t0)
             if b is None:
-                b = {"t": t0, "hrs": [], "min": hr, "max": hr, "zones": {}}
+                b = {"t": t0, "hrs": [], "min": hr, "max": hr, "zones": {}, "last_ts": ts, "last_hr": hr, "last_zi": zi}
                 buckets[t0] = b
             b["hrs"].append(hr)
             if hr < b["min"]: b["min"] = hr
             if hr > b["max"]: b["max"] = hr
             b["zones"][zi] = b["zones"].get(zi, 0) + 1
+            # conservar la última observación real del bucket
+            if ts >= b["last_ts"]:
+                b["last_ts"] = ts
+                b["last_hr"] = hr
+                b["last_zi"] = zi
 
+        # 2) Rango continuo de buckets [first_t0 .. last_t0]
+        first_t0 = min(buckets.keys())
+        last_t0  = max(buckets.keys())
+
+        # 3) Repetición “carry-forward” si falta un bucket y el último dato no es viejo
+        #    tolerancia: 2 * bucket_ms (ajústalo si quieres)
+        REPEAT_TOLERANCE_MS = 2 * bucket_ms
+
+        # Llevar última lectura conocida (ts, hr, zi) mientras recorremos
+        # Arrancamos con la del primer bucket real
+        last_seen_ts = buckets[first_t0]["last_ts"]
+        last_seen_hr = buckets[first_t0]["last_hr"]
+        last_seen_zi = buckets[first_t0]["last_zi"]
+
+        t = first_t0
+        while t <= last_t0:
+            if t not in buckets and HISTORY_REPEAT_LAST_IF_IDLE:
+                # ¿podemos repetir?
+                # Si no hay last_seen todavía, no rellenamos
+                if last_seen_ts is not None:
+                    # Edad de la última muestra cuando empieza este bucket
+                    age_ms = (t - (last_seen_ts // bucket_ms) * bucket_ms)
+                    if age_ms <= REPEAT_TOLERANCE_MS:
+                        # crear bucket sintético con 1 muestra
+                        buckets[t] = {
+                            "t": t,
+                            "hrs": [last_seen_hr],
+                            "min": last_seen_hr,
+                            "max": last_seen_hr,
+                            "zones": { last_seen_zi: 1 },
+                            "last_ts": last_seen_ts,
+                            "last_hr": last_seen_hr,
+                            "last_zi": last_seen_zi,
+                            "_synthetic": True,
+                        }
+            # si existe bucket, actualizamos last_seen al final de paso
+            if t in buckets:
+                b = buckets[t]
+                # mantener “última observación” como la del bucket
+                last_seen_ts = b["last_ts"]
+                last_seen_hr = b["last_hr"]
+                last_seen_zi = b["last_zi"]
+            t += bucket_ms
+
+        # 4) Salida compacta
         from statistics import mean
         out = []
         for t0 in sorted(buckets.keys()):
@@ -247,26 +294,42 @@ class SessionStore:
                             sess.moov_total += rate_mp * dt_min
             sess.last_ts = ts
 
-            # Registrar en historial (throttling + dedupe)
+            # Registrar en historial (throttling + dedupe + repeat-last si procede)
             if HR_HISTORY_ENABLED and isinstance(hr, int) and hr > 0:
                 try:
                     ts_ms_now = int(ts.timestamp() * 1000)
                     save = False
+                    to_store_hr = int(hr)
+                    to_store_zone = zint
+
                     if sess.last_hist_ts is None:
+                        # primera muestra
                         save = True
                     else:
                         dt_ms_hist = ts_ms_now - sess.last_hist_ts
                         if dt_ms_hist >= HR_HISTORY_SAMPLE_MIN_MS:
-                            delta_ok = (sess.last_hist_hr is None) or (abs(hr - int(sess.last_hist_hr)) >= HR_HISTORY_MIN_DELTA)
+                            delta_ok = (sess.last_hist_hr is None) or (
+                                abs(int(hr) - int(sess.last_hist_hr)) >= HR_HISTORY_MIN_DELTA
+                            )
                             zone_changed = (sess.last_hist_zone != zint)
-                            if delta_ok or (HR_HISTORY_ON_ZONE_CHANGE and zone_changed):
+
+                            if zone_changed and HR_HISTORY_ON_ZONE_CHANGE:
                                 save = True
+                            elif delta_ok:
+                                save = True
+                            elif HISTORY_REPEAT_LAST_IF_IDLE:
+                                # No cambió nada "material" pero queremos continuidad:
+                                # repetimos la última muestra con timestamp actual.
+                                to_store_hr = int(sess.last_hist_hr if sess.last_hist_hr is not None else hr)
+                                to_store_zone = int(sess.last_hist_zone if sess.last_hist_zone is not None else zint)
+                                save = True
+                            # si no, no guardamos nada (para ahorrar aún más)
 
                     if save:
-                        sess.hist.append((ts_ms_now, int(hr), zint))
+                        sess.hist.append((ts_ms_now, to_store_hr, to_store_zone))
                         sess.last_hist_ts = ts_ms_now
-                        sess.last_hist_hr = int(hr)
-                        sess.last_hist_zone = zint
+                        sess.last_hist_hr = to_store_hr
+                        sess.last_hist_zone = to_store_zone
                         self._purge_history_by_time(sess)
                 except Exception:
                     pass

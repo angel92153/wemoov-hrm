@@ -21,7 +21,7 @@ HR_HISTORY_KEEP_MS = 3_600_000     # 1 hora
 HR_HISTORY_SAMPLE_MIN_MS = 1000    # mínimo 1s entre muestras
 HR_HISTORY_MIN_DELTA = 2           # sólo guardar si cambia ≥2 bpm
 HR_HISTORY_ON_ZONE_CHANGE = True   # siempre guardar si cambia la zona
-+HISTORY_PURGE_ON_SESSION_END = False  # si True, no se purga por tiempo; se limpia al acabar sesión
+HISTORY_PURGE_ON_SESSION_END = False  # si True, no se purga por tiempo; se limpia al acabar sesión
 
 # Zonas por %HRR (Karvonen)
 HRR_Z1 = 0.50  # <50% HRR
@@ -89,6 +89,7 @@ def init_from_app(app) -> None:
     global KCAL_MODE, MET_REST, _SESSION_MODE, INTEGRATE_MAX_GAP_MS
     global HR_HISTORY_ENABLED, HR_HISTORY_MAX_SAMPLES, HR_HISTORY_KEEP_MS
     global HR_HISTORY_SAMPLE_MIN_MS, HR_HISTORY_MIN_DELTA, HR_HISTORY_ON_ZONE_CHANGE
+    global HISTORY_PURGE_ON_SESSION_END, HISTORY_REPEAT_LAST_IF_IDLE
 
     cfg = app.config
 
@@ -104,10 +105,11 @@ def init_from_app(app) -> None:
     HR_HISTORY_MAX_SAMPLES   = int(cfg.get("HR_HISTORY_MAX_SAMPLES", 4000))
     HR_HISTORY_KEEP_MS       = int(cfg.get("HR_HISTORY_KEEP_MS", 3_600_000))
     HR_HISTORY_SAMPLE_MIN_MS = int(cfg.get("HR_HISTORY_SAMPLE_MIN_MS", 1000))
-    HR_HISTORY_MIN_DELTA     = int(cfg.get("HR_HISTORY_MIN_DELTA", 2))
+    HR_HISTORY_MIN_DELTA     = int(cfg.get("HR_HISTORY_MIN_DELTA", 0))
     HR_HISTORY_ON_ZONE_CHANGE= bool(cfg.get("HR_HISTORY_ON_ZONE_CHANGE", True))
     global HISTORY_PURGE_ON_SESSION_END
     HISTORY_PURGE_ON_SESSION_END = bool(cfg.get("HR_HISTORY_PURGE_ON_END", False))
+    HISTORY_REPEAT_LAST_IF_IDLE = bool(int(cfg.get("HISTORY_REPEAT_LAST_IF_IDLE", "1")))
 
     configure_simple_points(
         target_points           = int(cfg.get("MOOV_TARGET_POINTS", 3000)),
