@@ -22,7 +22,15 @@ from typing import Dict, Any
 
 # ======================= CONFIGURACIÓN =======================
 ENABLE_WILDCARD_SCAN   = True
+
+# Límite lógico de dedicados en este gestor
 MAX_DEDICATED_CHANNELS = 7
+
+# Límite físico típico del dongle ANT: 8 canales totales (0..7).
+# Deja margen por si el stack usa alguno extra; por defecto reservamos 1 para wildcard.
+MAX_TOTAL_CHANNELS     = 8
+MAX_DEDICATED_SAFE     = min(MAX_DEDICATED_CHANNELS, max(0, MAX_TOTAL_CHANNELS - 1))
+
 INACTIVITY_RELEASE_SEC = 20    # s sin datos para liberar canal dedicado
 
 # Radio (ANT+ HRM típico)
@@ -34,6 +42,8 @@ NETWORK_KEY   = [0xB9,0xA5,0x21,0xFB,0xBD,0x72,0xC3,0x45]  # clave pública ANT+
 
 # Mantenimiento
 REAPER_SLEEP_S = 0.5
+
+# Verbose de depuración (True para flood de logs)
 VERBOSE        = False
 
 # ---------- Rearme y anti-latch (workaround para wildcard “pegajoso”) ----------
@@ -43,6 +53,9 @@ REARM_BACKOFF_S = 1.2            # mínimo entre rearms (debounce)
 IGNORE_AFTER_REARM_S = 0.9       # ventana post-rearme para ignorar IDs ya dedicados
 IDLE_LATCH_HITS_THRESHOLD = 3    # si solo vemos dedicados N veces seguidas -> rearme
 # ============================================================
+
+# ---------- Antirace / Debounce de promoción ----------
+PROMOTE_DEBOUNCE_S = 0.30        # no intentar promover el mismo dev dentro de esta ventana
 
 monotonic = time.monotonic  # alias para tiempos relativos/intervalos
 
@@ -58,9 +71,46 @@ def _to_bytes(p) -> bytes:
         return bytes(p)
 
 
+# ---- Logs
 def vlog(msg: str):
     if VERBOSE:
         print(msg)
+
+
+def ilog(msg: str):
+    print(msg)
+
+
+def wlog(msg: str):
+    print(f"[ANT][WARN] {msg}")
+
+
+def elog(msg: str):
+    print(f"[ANT][ERROR] {msg}")
+
+
+# ---- Número/etiqueta de canal
+def _channel_num(ch) -> str:
+    """Intenta extraer el 'channel number' para logs."""
+    for attr in ("number", "_channel_number", "channel_number"):
+        if hasattr(ch, attr):
+            try:
+                val = getattr(ch, attr)
+                return str(val() if callable(val) else val)
+            except Exception:
+                pass
+    return "?"
+
+
+def _channel_label(ch, synthetic_id: int | None = None) -> str:
+    """
+    Etiqueta amigable para logs. Si hay número real, lo muestra (#N).
+    Si no, usa un ID sintético estable (ch@SYN).
+    """
+    n = _channel_num(ch)
+    if n != "?":
+        return f"#{n}"
+    return f"ch@{synthetic_id if synthetic_id is not None else hex(id(ch))}"
 
 
 class AntDynamicManager:
@@ -92,6 +142,24 @@ class AntDynamicManager:
         # Histeresis para detectar “idle-latch”
         self._idle_latch_hits = 0
         self._last_idle_seen_set = set()
+
+        # ---- Antirace para promoción ----
+        self._promoting = set()              # dev_ids en promoción en curso
+        self._last_promoted_at: Dict[int, float] = {}  # dev_id -> monotonic (debounce)
+
+        # ---- IDs sintéticos para canales (cuando la lib no expone número) ----
+        self._ch_seq = 0                     # contador de IDs sintéticos
+        self._ch_ids: Dict[Any, int] = {}    # Channel -> synthetic_id
+
+    # ---------- helpers internos ----------
+    def _assign_synth_id(self, ch) -> int:
+        sid = self._ch_ids.get(ch)
+        if sid is not None:
+            return sid
+        self._ch_seq += 1
+        sid = self._ch_seq
+        self._ch_ids[ch] = sid
+        return sid
 
     # ---------- INIT ----------
     def _init_node(self):
@@ -170,17 +238,26 @@ class AntDynamicManager:
             ch.enable_extended_messages(True)
             vlog("[ANT] Extended habilitado en Channel")
         except Exception as e:
-            print(f"[ANT] No se pudo habilitar extended en Channel: {e}")
+            wlog(f"No se pudo habilitar extended en Channel: {e}")
 
-        try: ch.set_search_timeout(255)
-        except Exception: pass
-        try: ch.set_low_priority_search_timeout(255)
-        except Exception: pass
+        try:
+            ch.set_search_timeout(255)
+        except Exception as e:
+            wlog(f"set_search_timeout(255) falló: {e}")
+        try:
+            # algunas versiones de openant no lo tienen
+            if hasattr(ch, "set_low_priority_search_timeout"):
+                ch.set_low_priority_search_timeout(255)
+            else:
+                vlog("set_low_priority_search_timeout() no disponible en esta versión de Channel")
+        except Exception as e:
+            wlog(f"set_low_priority_search_timeout(255) falló: {e}")
 
         ch.on_broadcast_data = on_broadcast
         ch.open()
         self.wildcard = ch
-        print("[ANT+] Wildcard abierto (búsqueda continua).")
+        sid = self._assign_synth_id(ch)
+        ilog(f"[ANT+] Wildcard abierto (búsqueda continua) en canal {_channel_label(ch, sid)}.")
 
     # ---------- rearme: marcado (debounced) ----------
     def _schedule_rearm(self, now_m: float, reason: str = "opportunistic"):
@@ -203,7 +280,7 @@ class AntDynamicManager:
                 now_m = monotonic()
                 self._last_scan_rearm_mono = now_m
                 self._ignore_until_mono = now_m + IGNORE_AFTER_REARM_S
-                vlog(f"[ANT+] Wildcard abierto (motivo: {self._rearm_reason}).")
+                ilog(f"[ANT+] Wildcard abierto (motivo: {self._rearm_reason}).")
                 return
 
             # silencia callbacks durante el rearme
@@ -224,22 +301,38 @@ class AntDynamicManager:
                         if "CHANNEL_IN_WRONG_STATE" in str(e):
                             time.sleep(0.08 + 0.04 * i)
                         else:
-                            raise
+                            wlog(f"Wildcard close() aviso: {e}")
+                            break
                 time.sleep(0.06)
 
                 # reconfigurar y reabrir
-                try: ch.set_rf_freq(RF_FREQ)
-                except Exception: pass
-                try: ch.set_period(PERIOD)
-                except Exception: pass
-                try: ch.set_id(0, DEVTYPE_HRM, 0)
-                except Exception: pass
-                try: ch.enable_extended_messages(True)
-                except Exception: pass
-                try: ch.set_search_timeout(255)
-                except Exception: pass
-                try: ch.set_low_priority_search_timeout(255)
-                except Exception: pass
+                for setter, name, val in (
+                    (ch.set_rf_freq, "set_rf_freq", RF_FREQ),
+                    (ch.set_period, "set_period", PERIOD),
+                    (ch.set_id, "set_id", (0, DEVTYPE_HRM, 0)),
+                ):
+                    try:
+                        if name == "set_id":
+                            setter(*val)
+                        else:
+                            setter(val)
+                    except Exception as e:
+                        wlog(f"Wildcard {name} fallo durante rearme: {e}")
+                try:
+                    ch.enable_extended_messages(True)
+                except Exception as e:
+                    wlog(f"Wildcard enable_extended_messages fallo rearme: {e}")
+                try:
+                    ch.set_search_timeout(255)
+                except Exception as e:
+                    wlog(f"Wildcard set_search_timeout fallo rearme: {e}")
+                try:
+                    if hasattr(ch, "set_low_priority_search_timeout"):
+                        ch.set_low_priority_search_timeout(255)
+                    else:
+                        vlog("set_low_priority_search_timeout() no disponible (rearme)")
+                except Exception as e:
+                    wlog(f"Wildcard set_low_priority_search_timeout fallo rearme: {e}")
 
                 # reenganchar handler del wildcard (misma lógica que _open_wildcard)
                 def on_broadcast(payload):
@@ -291,23 +384,29 @@ class AntDynamicManager:
                         if "CHANNEL_IN_WRONG_STATE" in str(e):
                             time.sleep(0.08 + 0.04 * i)
                         else:
-                            raise
-            except Exception:
+                            wlog(f"Wildcard open() durante rearme: {e}")
+                            break
+            except Exception as e:
+                wlog(f"Rearme wildcard (reusar): {e}")
                 ok = False
 
             if ok:
                 now_m = monotonic()
                 self._last_scan_rearm_mono = now_m
                 self._ignore_until_mono = now_m + IGNORE_AFTER_REARM_S
-                vlog(f"[ANT+] Wildcard rearmado (mismo canal, motivo: {self._rearm_reason}).")
+                ilog(f"[ANT+] Wildcard rearmado (mismo canal {_channel_label(ch, self._ch_ids.get(ch))}, motivo: {self._rearm_reason}).")
                 return
 
             # 2) fallback: cerrar+unassign+recrear
             try:
-                try: ch.close()
-                except Exception: pass
-                try: ch.unassign()
-                except Exception: pass
+                try:
+                    ch.close()
+                except Exception as e:
+                    wlog(f"Wildcard close() fallback: {e}")
+                try:
+                    ch.unassign()
+                except Exception as e:
+                    wlog(f"Wildcard unassign() fallback: {e}")
             finally:
                 self.wildcard = None
                 time.sleep(0.10)
@@ -316,7 +415,8 @@ class AntDynamicManager:
             now_m = monotonic()
             self._last_scan_rearm_mono = now_m
             self._ignore_until_mono = now_m + IGNORE_AFTER_REARM_S
-            vlog(f"[ANT+] Wildcard rearmado (fallback recreate, motivo: {self._rearm_reason}).")
+            sid = self._ch_ids.get(self.wildcard)
+            ilog(f"[ANT+] Wildcard rearmado (fallback recreate {_channel_label(self.wildcard, sid)}, motivo: {self._rearm_reason}).")
         finally:
             self._restart_guard = False
 
@@ -332,34 +432,84 @@ class AntDynamicManager:
         return _h
 
     def _maybe_promote(self, dev_id: int):
-        """Abre un canal dedicado para dev_id si hay hueco."""
+        """Abre un canal dedicado para dev_id si hay hueco, con antirace + tope total."""
+        now_m = monotonic()
+
+        # Debounce por dev (reduce ráfagas de promoción)
+        if self._last_promoted_at.get(dev_id, 0.0) + PROMOTE_DEBOUNCE_S > now_m:
+            vlog(f"[ANT] Debounce promoción dev={dev_id}")
+            return
+
+        pass_to_close = None
+
         with self.lock:
-            if dev_id in self.channels:
+            # Si ya está en canales o en promoción, salimos.
+            if dev_id in self.channels or dev_id in self._promoting:
                 return
-            if len(self.channels) >= MAX_DEDICATED_CHANNELS:
-                # libera el menos reciente
+
+            # Tope duro: no exceder dedicados seguros si wildcard está presente
+            if self.wildcard is not None and len(self.channels) >= MAX_DEDICATED_SAFE:
+                # libera el menos reciente (si es diferente a dev_id)
                 to_close = min(self.channels.keys(), key=lambda d: self.last_seen.get(d, 0.0))
-            else:
-                to_close = None
+                if to_close != dev_id:
+                    pass_to_close = to_close
+                else:
+                    # Si el menos reciente es el mismo (raro), no cerramos para no ciclar
+                    vlog(f"[ANT] Tope de dedicados alcanzado; no hay candidato distinto a cerrar para dev={dev_id}")
+                    return
 
-        if to_close is not None and to_close != dev_id:
-            self._close_channel(to_close)
+            # Marca este dev como en promoción (antirace)
+            self._promoting.add(dev_id)
 
-        with self.lock:
-            if len(self.channels) < MAX_DEDICATED_CHANNELS and dev_id not in self.channels:
-                try:
-                    ch = self.node.new_channel(self.Channel.Type.BIDIRECTIONAL_RECEIVE)
-                    ch.set_period(PERIOD)
-                    ch.set_rf_freq(RF_FREQ)
-                    ch.set_id(dev_id, DEVTYPE_HRM, 0)
-                    try: ch.enable_extended_messages(True)
-                    except Exception: pass
-                    ch.on_broadcast_data = self._dedicated_handler(dev_id)
-                    ch.open()
+        # Cerrar fuera del lock para evitar bloqueos largos
+        if pass_to_close is not None:
+            self._close_channel(pass_to_close)
+
+        try:
+            # Doble-check bajo lock por si otra ruta lo añadió mientras cerrábamos
+            with self.lock:
+                if dev_id in self.channels:
+                    return
+
+            ch = self.node.new_channel(self.Channel.Type.BIDIRECTIONAL_RECEIVE)
+            ch.set_period(PERIOD)
+            ch.set_rf_freq(RF_FREQ)
+            ch.set_id(dev_id, DEVTYPE_HRM, 0)
+            try:
+                ch.enable_extended_messages(True)
+            except Exception as e:
+                wlog(f"Dedicated enable_extended_messages dev={dev_id}: {e}")
+            ch.on_broadcast_data = self._dedicated_handler(dev_id)
+            ch.open()
+
+            # Commit bajo lock, con doble-check
+            with self.lock:
+                if dev_id not in self.channels:
                     self.channels[dev_id] = ch
-                    print(f"[ANT+] Dedicado abierto dev={dev_id} ({len(self.channels)}/{MAX_DEDICATED_CHANNELS})")
-                except Exception as e:
-                    print(f"[ANT!] Error abriendo dedicado dev={dev_id}: {e}")
+                    self._last_promoted_at[dev_id] = now_m
+                    sid = self._assign_synth_id(ch)
+                    ilog(f"[ANT+] Dedicado abierto dev={dev_id} "
+                         f"({_channel_label(ch, sid)}; {len(self.channels)}/{MAX_DEDICATED_SAFE})")
+                else:
+                    # Otro hilo lo agregó: cerramos el duplicado para no “comernos” un canal
+                    try:
+                        ch.on_broadcast_data = lambda *_: None
+                    except Exception:
+                        pass
+                    try:
+                        ch.close()
+                    except Exception as e:
+                        wlog(f"Cierre duplicado dev={dev_id}: close() {e}")
+                    try:
+                        ch.unassign()
+                    except Exception as e:
+                        wlog(f"Cierre duplicado dev={dev_id}: unassign() {e}")
+                    vlog(f"[ANT] Dedicado duplicado dev={dev_id} descartado.")
+        except Exception as e:
+            elog(f"Error abriendo dedicado dev={dev_id}: {e}")
+        finally:
+            with self.lock:
+                self._promoting.discard(dev_id)
 
     def _close_channel(self, dev_id: int):
         ch = None
@@ -371,16 +521,23 @@ class AntDynamicManager:
         if not ch:
             return
 
-        try: ch.on_broadcast_data = lambda *_: None
-        except Exception: pass
+        chlbl = _channel_label(ch, self._ch_ids.get(ch))
 
-        try: ch.close()
+        try:
+            ch.on_broadcast_data = lambda *_: None
         except Exception as e:
-            vlog(f"[ANT] Aviso al cerrar dev={dev_id}: {e}")
-        try: ch.unassign()
-        except Exception: pass
+            wlog(f"dev={dev_id} canal {chlbl} limpiar callback: {e}")
 
-        vlog(f"[ANT] Dedicado liberado dev={dev_id}")
+        try:
+            ch.close()
+        except Exception as e:
+            wlog(f"dev={dev_id} canal {chlbl} close(): {e}")
+        try:
+            ch.unassign()
+        except Exception as e:
+            wlog(f"dev={dev_id} canal {chlbl} unassign(): {e}")
+
+        vlog(f"[ANT] Dedicado liberado dev={dev_id} (canal {chlbl})")
 
     # ---------- mantenimiento ----------
     def _reaper_loop(self):
@@ -394,6 +551,7 @@ class AntDynamicManager:
                         to_free.append(dev)
 
             for dev in to_free:
+                ilog(f"[ANT] Inactividad: liberando dev={dev}")
                 self._close_channel(dev)
 
             # Rearme pendiente (debounced con backoff)
@@ -402,14 +560,14 @@ class AntDynamicManager:
                 try:
                     self._rearm_wildcard_reuse_same()
                 except Exception as e:
-                    print(f"[ANT] Fallo rearmando wildcard: {e}")
+                    elog(f"Fallo rearmando wildcard: {e}")
 
             # Watchdog wildcard
             if not self.wildcard:
                 try:
                     self._open_wildcard()
                 except Exception as e:
-                    print(f"[ANT] Watchdog: no se pudo abrir wildcard: {e}")
+                    elog(f"Watchdog: no se pudo abrir wildcard: {e}")
 
             time.sleep(REAPER_SLEEP_S)
 
@@ -418,7 +576,7 @@ class AntDynamicManager:
         self._init_node()
         try:
             self.node.start()
-            print("[ANT+] Nodo iniciado. Escuchando HRM…")
+            ilog("[ANT+] Nodo iniciado. Escuchando HRM…")
             while True:
                 time.sleep(0.2)
         except KeyboardInterrupt:
@@ -434,22 +592,28 @@ class AntDynamicManager:
             # Cerrar wildcard
             try:
                 if self.wildcard:
-                    try: self.wildcard.on_broadcast_data = lambda *_: None
-                    except Exception: pass
-                    try: self.wildcard.close()
-                    except Exception: pass
-                    try: self.wildcard.unassign()
-                    except Exception: pass
-            except Exception:
-                pass
+                    try:
+                        self.wildcard.on_broadcast_data = lambda *_: None
+                    except Exception as e:
+                        wlog(f"Wildcard limpiar callback: {e}")
+                    try:
+                        self.wildcard.close()
+                    except Exception as e:
+                        wlog(f"Wildcard close(): {e}")
+                    try:
+                        self.wildcard.unassign()
+                    except Exception as e:
+                        wlog(f"Wildcard unassign(): {e}")
+            except Exception as e:
+                wlog(f"Wildcard teardown: {e}")
 
             try:
                 if self.node:
                     self.node.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                wlog(f"Node stop(): {e}")
 
-            print("[ANT+] Parado.")
+            ilog("[ANT+] Parado.")
 
 
 # -------------------- LANZADOR PÚBLICO --------------------
@@ -459,7 +623,7 @@ def run_ant_listener(state: dict):
     `state` es un dict compartido desde RealHRProvider.
     """
     if not ENABLE_WILDCARD_SCAN:
-        print("[ANT] Escaneo deshabilitado.")
+        ilog("[ANT] Escaneo deshabilitado.")
         return
 
     mgr = AntDynamicManager(state)

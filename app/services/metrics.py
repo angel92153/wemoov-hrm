@@ -1,7 +1,9 @@
 # app/services/metrics.py
 from __future__ import annotations
 from datetime import datetime, date, timezone
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
+from collections import deque
+from statistics import mean
 
 # ─────────────────────────────────────────────────────────────
 # Variables globales (configurables vía init_from_app)
@@ -11,7 +13,17 @@ MET_REST  = 1.0            # MET basal (kcal/kg/h)
 _SESSION_MODE = "mixed"    # "cardio" | "strength" | "mixed"
 
 # No retro-integrar huecos mayores a este umbral (ms)
-INTEGRATE_MAX_GAP_MS = 10000  # se sobreescribe en init_from_app con LIVE_INTEGRATE_MAX_GAP_MS
+INTEGRATE_MAX_GAP_MS = 2000  # override con LIVE_INTEGRATE_MAX_GAP_MS en app.config
+
+# Historial HR (configurable)
+HR_HISTORY_ENABLED = True
+HR_HISTORY_MAX_SAMPLES = 4000      # ~algo más de 1h si 1 muestra/s
+HR_HISTORY_KEEP_MS = 3_600_000     # 1 hora
+
+# Política de muestreo
+HR_HISTORY_SAMPLE_MIN_MS = 1000    # mínimo 1s entre muestras
+HR_HISTORY_MIN_DELTA = 2           # sólo guardar si cambia ≥2 bpm
+HR_HISTORY_ON_ZONE_CHANGE = True   # siempre guardar si cambia la zona
 
 # Zonas por %HRR (Karvonen)
 HRR_Z1 = 0.50  # <50% HRR
@@ -52,14 +64,6 @@ def configure_simple_points(target_points: int,
                             intense_equiv: float = 2.0,
                             z2_factor: float = 0.66,
                             z3_factor: float = 1.33) -> None:
-    """
-    Fija puntos/min por zona a partir del objetivo:
-      - rate_mod = target_points / target_minutes_moderate
-      - Z2 = rate_mod * z2_factor
-      - Z3 = rate_mod * z3_factor
-      - Z4 = Z5 = rate_mod * intense_equiv
-      - Z1 = 0
-    """
     global _MOOV_RATE
     tp = float(target_points)
     tm = float(target_minutes_moderate)
@@ -69,8 +73,8 @@ def configure_simple_points(target_points: int,
     if tp <= 0 or tm <= 0 or k <= 0:
         return
 
-    rate_mod = tp / tm          # p.ej., 3000/300 = 10 pts/min
-    rate_int = rate_mod * k     # p.ej., 10*2 = 20 pts/min
+    rate_mod = tp / tm
+    rate_int = rate_mod * k
 
     _MOOV_RATE = {
         "Z1": 0.0,
@@ -83,24 +87,34 @@ def configure_simple_points(target_points: int,
 def init_from_app(app) -> None:
     """
     Cargar parámetros desde app.config UNA sola vez al arrancar la app.
-    Requiere que se llame desde create_app() dentro de app.app_context().
     """
     global KCAL_MODE, MET_REST, _SESSION_MODE, INTEGRATE_MAX_GAP_MS
+    global HR_HISTORY_ENABLED, HR_HISTORY_MAX_SAMPLES, HR_HISTORY_KEEP_MS
+    global HR_HISTORY_SAMPLE_MIN_MS, HR_HISTORY_MIN_DELTA, HR_HISTORY_ON_ZONE_CHANGE
+
     cfg = app.config
 
     KCAL_MODE     = cfg.get("KCAL_MODE", "gross")
     MET_REST      = float(cfg.get("MET_REST", 1.0))
     _SESSION_MODE = cfg.get("SESSION_MODE", "mixed")
 
-    # ← umbral para evitar retro-integración de huecos largos
+    # Anti retro-integración
     INTEGRATE_MAX_GAP_MS = int(cfg.get("LIVE_INTEGRATE_MAX_GAP_MS", 2000))
 
+    # Historial HR
+    HR_HISTORY_ENABLED       = bool(cfg.get("HR_HISTORY_ENABLED", True))
+    HR_HISTORY_MAX_SAMPLES   = int(cfg.get("HR_HISTORY_MAX_SAMPLES", 4000))
+    HR_HISTORY_KEEP_MS       = int(cfg.get("HR_HISTORY_KEEP_MS", 3_600_000))
+    HR_HISTORY_SAMPLE_MIN_MS = int(cfg.get("HR_HISTORY_SAMPLE_MIN_MS", 1000))
+    HR_HISTORY_MIN_DELTA     = int(cfg.get("HR_HISTORY_MIN_DELTA", 2))
+    HR_HISTORY_ON_ZONE_CHANGE= bool(cfg.get("HR_HISTORY_ON_ZONE_CHANGE", True))
+
     configure_simple_points(
-        target_points= int(cfg.get("MOOV_TARGET_POINTS", 3000)),
-        target_minutes_moderate= int(cfg.get("MOOV_TARGET_MINUTES_MOD", 300)),
-        intense_equiv= float(cfg.get("MOOV_INTENSE_EQUIV", 2.0)),
-        z2_factor= float(cfg.get("MOOV_Z2_FACTOR", 0.66)),
-        z3_factor= float(cfg.get("MOOV_Z3_FACTOR", 1.33)),
+        target_points           = int(cfg.get("MOOV_TARGET_POINTS", 3000)),
+        target_minutes_moderate = int(cfg.get("MOOV_TARGET_MINUTES_MOD", 300)),
+        intense_equiv           = float(cfg.get("MOOV_INTENSE_EQUIV", 2.0)),
+        z2_factor               = float(cfg.get("MOOV_Z2_FACTOR", 0.66)),
+        z3_factor               = float(cfg.get("MOOV_Z3_FACTOR", 1.33)),
     )
 
 
@@ -117,7 +131,6 @@ def _parse_ts(ts_iso: str | None):
         return None
 
 def _age_from_dob_iso(dob: Optional[str]) -> Optional[int]:
-    """'YYYY-MM-DD' → edad en años (entera) o None si inválido."""
     if not dob:
         return None
     try:
@@ -130,7 +143,6 @@ def _age_from_dob_iso(dob: Optional[str]) -> Optional[int]:
         return None
 
 def _edad_from_user(user: Optional[dict]) -> Optional[int]:
-    """Prioriza edad derivada de dob; si no hay dob válido, usa user['edad'] si existe."""
     if not user:
         return None
     e_dob = _age_from_dob_iso(user.get("dob"))
@@ -144,13 +156,11 @@ def _edad_from_user(user: Optional[dict]) -> Optional[int]:
 # HRmax
 # ─────────────────────────────────────────────────────────────
 def hrmax_estimada(edad: int | None) -> int:
-    """Tanaka (2001): HRmax ≈ 208 - 0.7*edad."""
     if isinstance(edad, int) and edad > 0:
         return int(round(208 - 0.7 * edad))
     return 190
 
 def hrmax_from_user_or_estimada(edad: Optional[int], hrmax_user: Optional[int]) -> int:
-    """Usa hr_max del perfil si es válido; si no, Tanaka."""
     if isinstance(hrmax_user, int) and 120 <= hrmax_user <= 230:
         return hrmax_user
     return hrmax_estimada(edad)
@@ -160,11 +170,6 @@ def hrmax_from_user_or_estimada(edad: Optional[int], hrmax_user: Optional[int]) 
 # Elección de método
 # ─────────────────────────────────────────────────────────────
 def pick_method(user: Optional[dict]) -> Tuple[str, Optional[int]]:
-    """
-    Devuelve ("hrr"|"hrmax", hr_rest|None).
-    - hrr sólo si user['hr_rest'] es válido (30..100).
-    - si no, hrmax.
-    """
     if user:
         hr_rest = user.get("hr_rest")
         if isinstance(hr_rest, int) and 30 <= hr_rest <= 100:
@@ -176,14 +181,12 @@ def pick_method(user: Optional[dict]) -> Tuple[str, Optional[int]]:
 # Fracciones de intensidad
 # ─────────────────────────────────────────────────────────────
 def frac_hrr(hr: Optional[int], hr_max: int, hr_rest: int) -> float:
-    """%HRR en [0..1]."""
     if hr is None or hr_max <= 0:
         return 0.0
     hrr = max(1, hr_max - hr_rest)
     return max(0.0, min(1.0, (hr - hr_rest) / hrr))
 
 def frac_hrmax(hr: Optional[int], hr_max: int) -> float:
-    """%HRmax en [0..1]."""
     if hr is None or hr_max <= 0:
         return 0.0
     return max(0.0, min(1.0, hr / float(hr_max)))
@@ -207,15 +210,17 @@ def zone_code_from_frac(frac: float, method: str) -> str:
         elif frac < HMX_Z4: return "Z4"
         else:               return "Z5"
 
+def _zone_to_int(z: str) -> int:
+    return {"Z1":1,"Z2":2,"Z3":3,"Z4":4,"Z5":5}.get(z, 1)
+
+def _int_to_zone(i: int) -> str:
+    return {1:"Z1",2:"Z2",3:"Z3",4:"Z4",5:"Z5"}.get(int(i), "Z1")
+
 
 # ─────────────────────────────────────────────────────────────
 # Calorías (Keytel 2005)
 # ─────────────────────────────────────────────────────────────
 def kcal_per_min_keytel(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None) -> float:
-    """
-    - H: (-55.0969 + 0.6309*HR + 0.1988*peso + 0.2017*edad) / 4.184
-    - M: (-20.4022 + 0.4472*HR - 0.1263*peso + 0.0740*edad) / 4.184
-    """
     edad = edad if isinstance(edad, int) else 30
     peso = float(peso_kg) if (isinstance(peso_kg, (int, float)) and peso_kg > 0) else 70.0
     s = (sexo or "").strip().upper()
@@ -225,14 +230,11 @@ def kcal_per_min_keytel(hr: int, edad: int | None, peso_kg: float | None, sexo: 
         return (-55.0969 + 0.6309 * hr + 0.1988 * peso + 0.2017 * edad) / 4.184
 
 def kcal_adjustment_factor(frac: float, method: str, mode: str) -> float:
-    """Ajuste por modo/intensidad. Umbrales cambian según el método."""
     m = (mode or "cardio").lower()
     if m == "cardio":
         return 1.0
     if m == "strength":
         return STRENGTH_ADJ
-
-    # mixed
     if method == "hrr":
         if frac >= HRR_Z5:  return MIXED_ADJ_Z5
         if frac >= HRR_Z4:  return MIXED_ADJ_Z4
@@ -246,10 +248,6 @@ def kcal_adjustment_factor(frac: float, method: str, mode: str) -> float:
 
 def basal_kcal_per_min(edad: int | None, peso_kg: float | None, sexo: str | None,
                        met_rest: float = MET_REST) -> float:
-    """
-    Basal por minuto usando MET: ~1.0 kcal/kg/h en reposo ⇒ met * peso / 60.
-    (Evita usar Keytel(hr=0) porque puede ser negativo.)
-    """
     try:
         peso = float(peso_kg) if (isinstance(peso_kg, (int, float)) and peso_kg > 0) else 70.0
         met = float(met_rest) if met_rest and met_rest > 0 else 1.0
@@ -265,10 +263,6 @@ def kcal_per_min_adjusted(hr: int, edad: int | None, peso_kg: float | None, sexo
 
 def kcal_per_min_total(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None,
                        frac: float, method: str, mode: str | None = None) -> float:
-    """
-    Calorías totales = activas (Keytel ajustado) + basal (MET), si KCAL_MODE == 'gross'.
-    'mode' por defecto toma _SESSION_MODE configurado en init_from_app().
-    """
     eff_mode = (mode or _SESSION_MODE)
     active = kcal_per_min_adjusted(hr, edad, peso_kg, sexo, frac, method, eff_mode)
     if KCAL_MODE == "gross":
@@ -281,46 +275,136 @@ def kcal_per_min_total(hr: int, edad: int | None, peso_kg: float | None, sexo: s
 # Puntos por zona
 # ─────────────────────────────────────────────────────────────
 def moov_rate_per_min_from_zone(zone: str) -> float:
-    """Puntos/min según zona (usando el esquema simple por objetivo)."""
     return float(_MOOV_RATE.get(zone, 0.0))
 
 
 # ─────────────────────────────────────────────────────────────
-# Sesión (integrador) — interno al módulo
+# Sesión (integrador) — interno al módulo (con historial)
 # ─────────────────────────────────────────────────────────────
 class _Sess:
-    __slots__ = ("last_ts", "kcal_total", "moov_total")
+    __slots__ = (
+        "last_ts", "kcal_total", "moov_total",
+        "hist", "last_hist_ts", "last_hist_hr", "last_hist_zone"
+    )
     def __init__(self):
         self.last_ts = None
         self.kcal_total = 0.0
         self.moov_total = 0.0
+        # historial compacto: (ts_ms:int, hr:int, zone:int[1..5])
+        self.hist: deque[tuple[int, int, int]] = deque(maxlen=HR_HISTORY_MAX_SAMPLES if HR_HISTORY_ENABLED else 0)
+        self.last_hist_ts: Optional[int] = None
+        self.last_hist_hr: Optional[int] = None
+        self.last_hist_zone: Optional[int] = None
 
 class SessionStore:
     """
-    Integrador por dispositivo/usuario.
-      - Método de intensidad:
-          * Karvonen (%HRR) si user['hr_rest'] es válido (30..100)
-          * si no, %HRmax.
-      - Kcal: Keytel ajustado por intensidad (+ basal si KCAL_MODE='gross').
-      - Puntos: **por zona** (mapea Z1..Z5 a puntos por minuto) usando _MOOV_RATE.
+    Integrador por dispositivo/usuario + historial HR.
     """
     def __init__(self):
         self._by_dev: dict[int, _Sess] = {}
 
+    # ---------- limpieza ----------
     def clear(self, dev_id: int | None = None):
         if dev_id is None:
             self._by_dev.clear()
         else:
             self._by_dev.pop(dev_id, None)
 
+    # ---------- historial ----------
+    def _purge_history_by_time(self, sess: _Sess) -> None:
+        if not HR_HISTORY_ENABLED or HR_HISTORY_KEEP_MS <= 0 or not sess.hist:
+            return
+        try:
+            now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+            cutoff = now_ms - HR_HISTORY_KEEP_MS
+            # pop izquierda mientras sea viejo
+            while sess.hist and sess.hist[0][0] < cutoff:
+                sess.hist.popleft()
+        except Exception:
+            return
+
+    def get_history(self, dev_id: int, *, since_ms: int | None = None,
+                    limit: int | None = None, as_iso: bool = False) -> List[Dict[str, Any]]:
+        sess = self._by_dev.get(dev_id)
+        if not sess or not HR_HISTORY_ENABLED:
+            return []
+        self._purge_history_by_time(sess)
+
+        data = list(sess.hist)
+        if since_ms is not None and since_ms > 0:
+            data = [s for s in data if s[0] >= since_ms]
+        if isinstance(limit, int) and limit > 0:
+            data = data[-limit:]
+
+        out = []
+        if as_iso:
+            for (ts_ms, hr, zi) in data:
+                ts_iso = datetime.fromtimestamp(ts_ms/1000, tz=timezone.utc).isoformat().replace("+00:00","Z")
+                out.append({"ts": ts_iso, "hr": hr, "zone": _int_to_zone(zi)})
+        else:
+            for (ts_ms, hr, zi) in data:
+                out.append({"ts": ts_ms, "hr": hr, "zone": _int_to_zone(zi)})
+        return out
+
+    def get_all_histories(self, as_iso: bool = False) -> Dict[int, List[Dict[str, Any]]]:
+        out: Dict[int, List[Dict[str, Any]]] = {}
+        for dev_id in list(self._by_dev.keys()):
+            out[dev_id] = self.get_history(dev_id, as_iso=as_iso)
+        return out
+
+    def get_history_buckets(self, dev_id: int, *, bucket_ms: int = 60000,
+                            since_ms: int | None = None, max_points: int | None = None) -> List[Dict[str, Any]]:
+        """
+        Agrupa en ventanas de bucket_ms (p.ej. 60s) devolviendo:
+          { t: bucket_start_ms, hr_avg, hr_min, hr_max, count, zone_mode }
+        """
+        rows = self.get_history(dev_id, since_ms=since_ms, as_iso=False)
+        if not rows:
+            return []
+        if bucket_ms <= 0:
+            bucket_ms = 60000
+
+        buckets: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            ts = int(r["ts"])
+            hr = int(r["hr"])
+            z  = r["zone"]
+            zi = _zone_to_int(z)
+            t0 = (ts // bucket_ms) * bucket_ms
+            b = buckets.get(t0)
+            if b is None:
+                b = {"t": t0, "hrs": [], "min": hr, "max": hr, "zones": {}}
+                buckets[t0] = b
+            b["hrs"].append(hr)
+            if hr < b["min"]: b["min"] = hr
+            if hr > b["max"]: b["max"] = hr
+            b["zones"][zi] = b["zones"].get(zi, 0) + 1
+
+        out = []
+        for t0 in sorted(buckets.keys()):
+            b = buckets[t0]
+            zone_mode_i = max(b["zones"].items(), key=lambda kv: kv[1])[0]
+            out.append({
+                "t": t0,
+                "hr_avg": round(mean(b["hrs"]), 2),
+                "hr_min": b["min"],
+                "hr_max": b["max"],
+                "count": len(b["hrs"]),
+                "zone_mode": _int_to_zone(zone_mode_i),
+            })
+
+        if isinstance(max_points, int) and max_points > 0 and len(out) > max_points:
+            # decimación simple para no enviar demasiados puntos
+            step = max(1, len(out)//max_points)
+            out = out[::step]
+        return out
+
+    # ---------- integración + registro ----------
     def update(self, dev_id: int, user: dict | None, hr: int | None, ts_iso: str | None,
                mode: str | None = None):
         """
-        user esperado (si existe): {
-            "dob": "YYYY-MM-DD", "edad": int (opcional/fallback),
-            "peso": float, "sexo": "M"/"F",
-            "hr_max": int?, "hr_rest": int?
-        }
+        Devuelve dict con hr_max, method, zone, kcal acumuladas y puntos acumulados.
+        Además, registra (ts_ms, hr, zone) en el historial con política de muestreo.
         """
         # Edad y HRmax
         edad = _edad_from_user(user)
@@ -335,6 +419,8 @@ class SessionStore:
         sess = self._by_dev.get(dev_id)
         if sess is None:
             sess = _Sess()
+            if HR_HISTORY_ENABLED:
+                sess.hist = deque(maxlen=HR_HISTORY_MAX_SAMPLES)
             self._by_dev[dev_id] = sess
 
         ts = _parse_ts(ts_iso)
@@ -344,11 +430,11 @@ class SessionStore:
         # Fracción y zona
         frac = frac_hrr(hr, hr_max, hr_rest) if method == "hrr" else frac_hrmax(hr, hr_max)
         zcode = zone_code_from_frac(frac, method)
+        zint = _zone_to_int(zcode)
 
         # Integración temporal (si hay tiempo y HR)
         if ts and hr is not None:
             if sess.last_ts:
-                # medimos el gap en ms para compararlo con el umbral
                 dt_ms = max(0.0, (ts - sess.last_ts).total_seconds() * 1000.0)
                 if dt_ms > 0:
                     if dt_ms <= INTEGRATE_MAX_GAP_MS:
@@ -361,9 +447,33 @@ class SessionStore:
                         rate_mp = moov_rate_per_min_from_zone(zcode)
                         if rate_mp > 0:
                             sess.moov_total += rate_mp * dt_min
-                    # else: gap grande → NO integramos ese tramo (evita retro-integración)
-            # avanzamos el last_ts siempre al nuevo sello temporal
+                    # gap grande → no retro-integrar
+            # avanzar last_ts
             sess.last_ts = ts
+
+            # Registrar en historial (throttling + dedupe)
+            if HR_HISTORY_ENABLED and isinstance(hr, int) and hr > 0:
+                try:
+                    ts_ms_now = int(ts.timestamp() * 1000)
+                    save = False
+                    if sess.last_hist_ts is None:
+                        save = True
+                    else:
+                        dt_ms_hist = ts_ms_now - sess.last_hist_ts
+                        if dt_ms_hist >= HR_HISTORY_SAMPLE_MIN_MS:
+                            delta_ok = (sess.last_hist_hr is None) or (abs(hr - int(sess.last_hist_hr)) >= HR_HISTORY_MIN_DELTA)
+                            zone_changed = (sess.last_hist_zone != zint)
+                            if delta_ok or (HR_HISTORY_ON_ZONE_CHANGE and zone_changed):
+                                save = True
+
+                    if save:
+                        sess.hist.append((ts_ms_now, int(hr), zint))
+                        sess.last_hist_ts = ts_ms_now
+                        sess.last_hist_hr = int(hr)
+                        sess.last_hist_zone = zint
+                        self._purge_history_by_time(sess)
+                except Exception:
+                    pass
 
         return {
             "hr_max": hr_max,
@@ -377,7 +487,6 @@ class SessionStore:
 # ─────────────────────────────────────────────────────────────
 # API pública para /live
 # ─────────────────────────────────────────────────────────────
-# Almacén interno opcional para integrar (kcal/pts) por dispositivo/usuario
 _STORE = SessionStore()
 
 def live_full_summary(hr: int | None,
@@ -387,28 +496,11 @@ def live_full_summary(hr: int | None,
                       ts_iso: str | None = None,
                       integrate: bool = True,
                       mode: str | None = None) -> Dict[str, Any]:
-    """
-    Devuelve un dict listo para /live con:
-      - hr_max: HRmax de perfil o estimado (Tanaka)
-      - method: "hrr" | "hrmax"
-      - zone: "Z1".."Z5"
-      - kcal: acumuladas si integrate=True y dev_id+ts_iso; si no, por-minuto (kcal_per_min)
-      - moov_points: acumuladas si integrate=True; si no, rate por minuto (moov_rate_per_min)
-
-    integrate=True  → usa un integrador interno (SessionStore) con dev_id + ts_iso.
-    integrate=False → NO integra; devuelve rates por minuto.
-
-    Requisitos para integrar:
-      - dev_id no None
-      - ts_iso ISO válido (se usa para el paso de tiempo)
-    """
-    # Calcular hr_max y método con la lógica del módulo
     edad = _edad_from_user(user)
     hrmax_user = user.get("hr_max") if user else None
     hr_max = hrmax_from_user_or_estimada(edad, hrmax_user)
     method, hr_rest = pick_method(user)
 
-    # Integración con estado
     if integrate and (dev_id is not None) and ts_iso:
         res = _STORE.update(dev_id=dev_id, user=user or {}, hr=hr, ts_iso=ts_iso, mode=mode)
         return {
@@ -419,7 +511,6 @@ def live_full_summary(hr: int | None,
             "moov_points": float(res.get("moov_points", 0.0)),
         }
 
-    # Sin integración: devolver rates por minuto + zona
     if hr is None:
         frac = 0.0
         zone = "Z1"
@@ -440,33 +531,10 @@ def live_full_summary(hr: int | None,
         "moov_rate_per_min": round(moov_rate, 3),
     }
 
-def zone_summary_for_live(hr: int | None, user: dict | None) -> Dict[str, Any]:
-    """
-    Resumen simple para cuando sólo quieres HRmax+zona (sin kcal/puntos).
-    """
-    edad = _edad_from_user(user)
-    hrmax_user = user.get("hr_max") if user else None
-    hr_max = hrmax_from_user_or_estimada(edad, hrmax_user)
-    method, hr_rest = pick_method(user)
-    if hr is None:
-        frac = 0.0
-        zone = "Z1"
-    else:
-        frac = frac_hrr(hr, hr_max, hr_rest) if method == "hrr" else frac_hrmax(hr, hr_max)
-        zone = zone_code_from_frac(frac, method)
-    return {
-        "hr_max": hr_max,
-        "zone": zone,
-        "method": method,
-    }
-
 # ─────────────────────────────────────────────────────────────
 # Utilidades de limpieza para /live
 # ─────────────────────────────────────────────────────────────
 def clear_sessions(dev_ids: set[int] | None = None) -> None:
-    """
-    Borra todas las sesiones si dev_ids=None; si no, sólo las de esos IDs.
-    """
     if dev_ids is None:
         _STORE.clear()
         return
@@ -474,10 +542,6 @@ def clear_sessions(dev_ids: set[int] | None = None) -> None:
         _STORE.clear(did)
 
 def clear_inactive_sessions(keep_ids: set[int], older_than_ms: int) -> int:
-    """
-    Borra sesiones cuyo dev_id NO está en keep_ids y cuyo last_ts es anterior a now-older_than_ms.
-    Devuelve el número de sesiones eliminadas.
-    """
     if older_than_ms <= 0:
         return 0
     try:
