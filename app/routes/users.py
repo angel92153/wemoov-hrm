@@ -4,6 +4,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from app.db.repos import UsersRepo
 from datetime import date, timedelta
 import random
+from typing import Optional
 
 bp = Blueprint("users", __name__)
 
@@ -35,6 +36,15 @@ def _rand_dob(min_age=18, max_age=55) -> str:
     d = date.today() - timedelta(days=years*365 + extra_days)
     return d.isoformat()
 
+def _age_from_dob(dob_iso: str) -> int:
+    try:
+        y, m, d = map(int, dob_iso.split("-"))
+        born = date(y, m, d)
+        today = date.today()
+        return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+    except Exception:
+        return random.randint(20, 50)
+
 def _rand_weight(sexo: str) -> float:
     """Peso aproximado por sexo."""
     if (sexo or "").upper() == "F":
@@ -51,25 +61,50 @@ def _nickname_from(nombre: str) -> str:
         return base
     return base[:random.choice([3,4,5])]
 
+# -----------------------------
+# FCR (Frecuencia Cardíaca en Reposo)
+# -----------------------------
+def _rand_hr_rest(sexo: str, edad: int) -> int:
+    """
+    Genera una FCR realista en función de sexo/edad (ligero ajuste).
+    Rangos típicos saludables en reposo:
+      - Hombres: ~52–70 lpm
+      - Mujeres: ~55–74 lpm
+    Subimos 1–3 lpm para edades más altas dentro del rango.
+    """
+    sexo = (sexo or "M").upper()
+    if sexo == "F":
+        base = random.randint(55, 74)
+    else:
+        base = random.randint(52, 70)
+    # Ajuste suave por edad (más edad → ligeramente más alta)
+    if edad >= 45:
+        base += random.choice([1, 2, 3])
+    elif edad <= 25:
+        base -= random.choice([0, 1])  # quizá algo más baja si muy joven
+    return max(45, min(85, base))
+
 def _gen_sim_user(n: int) -> dict:
     """
     Genera un usuario simulado coherente.
-    n solo se usa para variar sexo/nombre cuando se crean en lote.
+    30% de probabilidad de tener FCR (hr_rest).
     """
     sexo = "M" if (n % 2 == 0) else "F"
-    if sexo == "M":
-        nombre = random.choice(_MALE_NAMES)
-    else:
-        nombre = random.choice(_FEMALE_NAMES)
+    nombre = random.choice(_MALE_NAMES if sexo == "M" else _FEMALE_NAMES)
     apellido = random.choice(_SURNAMES)
-    # opción de doble apellido para mayor realismo:
     if random.random() < 0.35:
         apellido = f"{apellido} {random.choice(_SURNAMES)}"
 
     apodo = _nickname_from(nombre)
     dob = _rand_dob()
     peso = _rand_weight(sexo)
-    hr_rest = random.randint(50, 70)
+
+    # 30% de probabilidad de tener FCR
+    if random.random() < 0.3:
+        # rangos realistas
+        hr_rest = random.randint(55, 74) if sexo == "F" else random.randint(52, 70)
+    else:
+        hr_rest = None  # sin FCR
 
     return {
         "nombre": nombre,
@@ -79,13 +114,14 @@ def _gen_sim_user(n: int) -> dict:
         "dob": dob,
         "peso": peso,
         "device_id": None,
-        "hr_rest": hr_rest,
+        "hr_rest": hr_rest,   # puede ser None
         "hr_max": None,
         "hr_max_auto": 1,
         "is_sim": 1,
-        # Puedes pasar edad=None; tus filtros la deducen desde dob
         "edad": None,
     }
+
+
 
 # ============================================
 # LISTADO DE USUARIOS
@@ -172,49 +208,91 @@ def delete(user_id: int):
 def set_simulated_users():
     """
     Crea o elimina usuarios simulados hasta alcanzar el número indicado.
-    Body JSON: { "count": <int>=0..N }
-    - Si 'count' > simulados actuales: crea los que falten con datos realistas.
-    - Si 'count' < simulados actuales: borra los sobrantes (por id descendente).
+    Acepta count vía JSON, form-data o querystring.
     """
-    data = request.get_json(silent=True) or {}
-    try:
-        target = max(0, int(data.get("count", 0)))
-    except Exception:
-        return jsonify({"ok": False, "error": "count debe ser un entero >= 0"}), 400
+    # 1) Leer 'count' desde varios sitios
+    payload = request.get_json(silent=True) or {}
+    count_candidates = [
+        payload.get("count"),
+        request.form.get("count"),
+        request.args.get("count"),
+    ]
+    count_val = None
+    for c in count_candidates:
+        if c is None or c == "":
+            continue
+        try:
+            count_val = int(c)
+            break
+        except Exception:
+            pass
+    if count_val is None:
+        return jsonify({"ok": False, "error": "Falta 'count' (int) en JSON, form o querystring."}), 400
+    if count_val < 0:
+        return jsonify({"ok": False, "error": "'count' debe ser >= 0"}), 400
+
+    target = count_val
 
     repo = _repo()
-    users = repo.list(limit=10000)
+    try:
+        users = repo.list(limit=10000)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"DB list() fallo: {e}"}), 500
+
     sim_users = [u for u in users if int(u.get("is_sim") or 0) == 1]
     current = len(sim_users)
 
+    # 2) Nada que hacer
     if current == target:
-        return jsonify({"ok": True, "count": target})
+        return jsonify({"ok": True, "count": target, "created": 0, "deleted": 0})
 
+    created = 0
+    deleted = 0
+    errors: list[str] = []
+
+    # 3) Crear faltantes
     if current < target:
         to_add = target - current
-        # Creamos usuarios simulados con datos "de verdad"
         for i in range(to_add):
             u = _gen_sim_user(n=current + i)
-            repo.create(
-                nombre=u["nombre"],
-                apellido=u["apellido"],
-                apodo=u["apodo"],
-                sexo=u["sexo"],
-                dob=u["dob"],
-                peso=u["peso"],
-                device_id=None,
-                hr_rest=u["hr_rest"],
-                hr_max=None,
-                hr_max_auto=1,
-                is_sim=1,
-            )
+            try:
+                repo.create(
+                    nombre=u["nombre"],
+                    apellido=u["apellido"],
+                    apodo=u["apodo"],
+                    sexo=u["sexo"],
+                    dob=u["dob"],
+                    peso=u["peso"],
+                    device_id=None,
+                    hr_rest=(int(u["hr_rest"]) if u["hr_rest"] is not None else None),
+                    hr_max=None,
+                    hr_max_auto=1,
+                    is_sim=1,
+                )
+                created += 1
+            except Exception as e:
+                errors.append(f"create[{i}]: {e}")
+
+    # 4) Borrar sobrantes
     else:
         to_del = current - target
         sim_users_sorted = sorted(sim_users, key=lambda u: int(u["id"]), reverse=True)
         for u in sim_users_sorted[:to_del]:
-            repo.delete(int(u["id"]))
+            try:
+                repo.delete(int(u["id"]))
+                deleted += 1
+            except Exception as e:
+                errors.append(f"delete[id={u['id']}]: {e}")
 
-    return jsonify({"ok": True, "count": target})
+    status_code = 200 if not errors else 207  # 207 Multi-Status si hubo mixto
+    return jsonify({
+        "ok": (len(errors) == 0),
+        "count": target,
+        "created": created,
+        "deleted": deleted,
+        "errors": errors or None
+    }), status_code
+
 
 # (Opcional) consultar el número actual sin recargar toda la lista
 @bp.get("/simulated")

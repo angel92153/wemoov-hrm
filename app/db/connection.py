@@ -1,7 +1,8 @@
+# app/db/connection.py
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from .paths import USERS_DB_PATH, SESSIONS_DB_PATH  # y DB_PATH si aún lo necesitas
+from flask import current_app, has_app_context
 
 def _apply_pragmas(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
@@ -12,10 +13,19 @@ def _apply_pragmas(conn: sqlite3.Connection) -> None:
     cur.execute("PRAGMA cache_size = -20000;")
     cur.close()
 
+def _users_db_path() -> Path:
+    if not has_app_context():
+        raise RuntimeError("get_users_conn() requiere app.app_context() activo")
+    return Path(current_app.config["USERS_DB_PATH"])
+
+def _sessions_db_path() -> Path:
+    if not has_app_context():
+        raise RuntimeError("get_sessions_conn() requiere app.app_context() activo")
+    return Path(current_app.config["SESSIONS_DB_PATH"])
+
 @contextmanager
-def get_conn(db_path: str | None = None):
-    # Por defecto: users.db
-    path = Path(db_path or USERS_DB_PATH)
+def get_conn(db_path: str | Path):
+    path = Path(db_path)
     path.parent.mkdir(exist_ok=True, parents=True)
     path.touch(exist_ok=True)
 
@@ -28,13 +38,12 @@ def get_conn(db_path: str | None = None):
     finally:
         conn.close()
 
-# Atajos convenientes (opcional)
 @contextmanager
 def get_users_conn():
-    with get_conn(USERS_DB_PATH) as conn:
+    with get_conn(_users_db_path()) as conn:
         yield conn
 
 @contextmanager
 def get_sessions_conn():
-    with get_conn(SESSIONS_DB_PATH) as conn:
+    with get_conn(_sessions_db_path()) as conn:
         yield conn

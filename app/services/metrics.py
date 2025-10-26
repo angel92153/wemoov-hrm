@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import datetime, date, timezone
 from typing import Optional, Tuple
 
-# ==================== PARÁMETROS GLOBALES ====================
-# "net"  = kcal activas (Keytel ajustado por intensidad)
-# "gross"= kcal totales (activas + basal ~ MET_REST * peso / 60)
-KCAL_MODE = "gross"
-MET_REST  = 1.0
-# =============================================================
+# ─────────────────────────────────────────────────────────────
+# Variables globales (se cargan en init_from_app)
+# ─────────────────────────────────────────────────────────────
+KCAL_MODE = "gross"   # "net" | "gross"
+MET_REST  = 1.0       # MET basal (kcal/kg/h)
+_SESSION_MODE = "mixed"  # "cardio" | "strength" | "mixed"
 
 # Zonas por %HRR (Karvonen)
 HRR_Z1 = 0.50  # <50% HRR
@@ -24,21 +24,83 @@ HMX_Z3 = 0.80  # 70–79%
 HMX_Z4 = 0.90  # 80–89%
 # Z5 ≥90% HRmax
 
-# Moov points
-MOOV_ALPHA = 4.0
-MOOV_BETA  = 2.5
-MOOV_MIN_HRR = 0.50  # empieza a puntuar ≥50% HRR
-MOOV_MIN_HMX = 0.60  # empieza a puntuar ≥60% HRmax
+# Puntos por zona (se recalcula en init_from_app usando tu Config objetivo)
+_MOOV_RATE: dict[str, float] = {
+    "Z1": 0.0,
+    "Z2": 10.0,
+    "Z3": 10.0,
+    "Z4": 20.0,
+    "Z5": 20.0,
+}
 
-# Ajustes energéticos por intensidad (modo "mixed")
-MIXED_ADJ_Z5 = 1.20
-MIXED_ADJ_Z4 = 1.10
+# Ajustes energéticos por intensidad (para SESSION_MODE="mixed"/"strength")
+MIXED_ADJ_Z5    = 1.20
+MIXED_ADJ_Z4    = 1.10
 MIXED_ADJ_REC_HRR = 0.90  # <50% HRR
 MIXED_ADJ_REC_HMX = 0.90  # <60% HRmax
-STRENGTH_ADJ = 1.30
+STRENGTH_ADJ    = 1.30
 
 
-# -------------------- Utilidades tiempo/edad --------------------
+# ─────────────────────────────────────────────────────────────
+# Inicialización desde Flask app
+# ─────────────────────────────────────────────────────────────
+def configure_simple_points(target_points: int,
+                            target_minutes_moderate: int,
+                            intense_equiv: float = 2.0,
+                            z2_factor: float = 0.66,
+                            z3_factor: float = 1.33) -> None:
+    """
+    Fija puntos/min por zona a partir del objetivo:
+      - rate_mod = target_points / target_minutes_moderate
+      - Z2 = rate_mod * z2_factor
+      - Z3 = rate_mod * z3_factor
+      - Z4 = Z5 = rate_mod * intense_equiv
+      - Z1 = 0
+    """
+    global _MOOV_RATE
+    tp = float(target_points)
+    tm = float(target_minutes_moderate)
+    k  = float(intense_equiv)
+    f2 = float(z2_factor)
+    f3 = float(z3_factor)
+    if tp <= 0 or tm <= 0 or k <= 0:
+        return
+
+    rate_mod = tp / tm          # p.ej., 3000/300 = 10 pts/min
+    rate_int = rate_mod * k     # p.ej., 10*2 = 20 pts/min
+
+    _MOOV_RATE = {
+        "Z1": 0.0,
+        "Z2": rate_mod * f2,
+        "Z3": rate_mod * f3,
+        "Z4": rate_int,
+        "Z5": rate_int,
+    }
+
+def init_from_app(app) -> None:
+    """
+    Cargar parámetros desde app.config UNA sola vez al arrancar la app.
+    Requiere que se llame desde create_app() dentro de app.app_context().
+    """
+    global KCAL_MODE, MET_REST, _SESSION_MODE
+    cfg = app.config
+
+    KCAL_MODE    = cfg.get("KCAL_MODE", "gross")
+    MET_REST     = float(cfg.get("MET_REST", 1.0))
+    _SESSION_MODE = cfg.get("SESSION_MODE", "mixed")
+
+    configure_simple_points(
+        target_points= int(cfg.get("MOOV_TARGET_POINTS", 3000)),
+        target_minutes_moderate= int(cfg.get("MOOV_TARGET_MINUTES_MOD", 300)),
+        intense_equiv= float(cfg.get("MOOV_INTENSE_EQUIV", 2.0)),
+        z2_factor= float(cfg.get("MOOV_Z2_FACTOR", 0.66)),
+        z3_factor= float(cfg.get("MOOV_Z3_FACTOR", 1.33)),
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# Utilidades tiempo/edad
+# ─────────────────────────────────────────────────────────────
 def _parse_ts(ts_iso: str | None):
     """ISO (con o sin Z) → datetime UTC | None."""
     if not ts_iso:
@@ -72,7 +134,9 @@ def _edad_from_user(user: Optional[dict]) -> Optional[int]:
     return int(e) if isinstance(e, int) and e >= 0 else None
 
 
-# -------------------- HRmax --------------------
+# ─────────────────────────────────────────────────────────────
+# HRmax
+# ─────────────────────────────────────────────────────────────
 def hrmax_estimada(edad: int | None) -> int:
     """Tanaka (2001): HRmax ≈ 208 - 0.7*edad."""
     if isinstance(edad, int) and edad > 0:
@@ -86,7 +150,9 @@ def hrmax_from_user_or_estimada(edad: Optional[int], hrmax_user: Optional[int]) 
     return hrmax_estimada(edad)
 
 
-# -------------------- Elección de método --------------------
+# ─────────────────────────────────────────────────────────────
+# Elección de método
+# ─────────────────────────────────────────────────────────────
 def pick_method(user: Optional[dict]) -> Tuple[str, Optional[int]]:
     """
     Devuelve ("hrr"|"hrmax", hr_rest|None).
@@ -100,7 +166,9 @@ def pick_method(user: Optional[dict]) -> Tuple[str, Optional[int]]:
     return "hrmax", None
 
 
-# -------------------- Fracciones de intensidad --------------------
+# ─────────────────────────────────────────────────────────────
+# Fracciones de intensidad
+# ─────────────────────────────────────────────────────────────
 def frac_hrr(hr: Optional[int], hr_max: int, hr_rest: int) -> float:
     """%HRR en [0..1]."""
     if hr is None or hr_max <= 0:
@@ -115,7 +183,9 @@ def frac_hrmax(hr: Optional[int], hr_max: int) -> float:
     return max(0.0, min(1.0, hr / float(hr_max)))
 
 
-# -------------------- Zonas --------------------
+# ─────────────────────────────────────────────────────────────
+# Zonas
+# ─────────────────────────────────────────────────────────────
 def zone_code_from_frac(frac: float, method: str) -> str:
     if method == "hrr":
         if   frac < HRR_Z1: return "Z1"
@@ -132,7 +202,9 @@ def zone_code_from_frac(frac: float, method: str) -> str:
         else:               return "Z5"
 
 
-# -------------------- Calorías (Keytel 2005) --------------------
+# ─────────────────────────────────────────────────────────────
+# Calorías (Keytel 2005)
+# ─────────────────────────────────────────────────────────────
 def kcal_per_min_keytel(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None) -> float:
     """
     - H: (-55.0969 + 0.6309*HR + 0.1988*peso + 0.2017*edad) / 4.184
@@ -186,25 +258,30 @@ def kcal_per_min_adjusted(hr: int, edad: int | None, peso_kg: float | None, sexo
     return max(0.0, base * adj)
 
 def kcal_per_min_total(hr: int, edad: int | None, peso_kg: float | None, sexo: str | None,
-                       frac: float, method: str, mode: str = "mixed") -> float:
-    """Calorías totales = activas (Keytel ajustado) + basal (MET), si KCAL_MODE == 'gross'."""
-    active = kcal_per_min_adjusted(hr, edad, peso_kg, sexo, frac, method, mode)
+                       frac: float, method: str, mode: str | None = None) -> float:
+    """
+    Calorías totales = activas (Keytel ajustado) + basal (MET), si KCAL_MODE == 'gross'.
+    'mode' por defecto toma _SESSION_MODE configurado en init_from_app().
+    """
+    eff_mode = (mode or _SESSION_MODE)
+    active = kcal_per_min_adjusted(hr, edad, peso_kg, sexo, frac, method, eff_mode)
     if KCAL_MODE == "gross":
         basal = basal_kcal_per_min(edad, peso_kg, sexo, MET_REST)
         return max(0.0, active + basal)
     return active
 
 
-# -------------------- Moov points --------------------
-def moov_rate_per_min_from_frac(frac: float, method: str) -> float:
-    """Tasa de puntos/min."""
-    thr = MOOV_MIN_HRR if method == "hrr" else MOOV_MIN_HMX
-    if frac < thr:
-        return 0.0
-    return MOOV_ALPHA * (frac ** MOOV_BETA)
+# ─────────────────────────────────────────────────────────────
+# Puntos por zona
+# ─────────────────────────────────────────────────────────────
+def moov_rate_per_min_from_zone(zone: str) -> float:
+    """Puntos/min según zona (usando el esquema simple por objetivo)."""
+    return float(_MOOV_RATE.get(zone, 0.0))
 
 
-# -------------------- Sesión --------------------
+# ─────────────────────────────────────────────────────────────
+# Sesión (integrador)
+# ─────────────────────────────────────────────────────────────
 class _Sess:
     __slots__ = ("last_ts", "kcal_total", "moov_total")
     def __init__(self):
@@ -219,7 +296,7 @@ class SessionStore:
           * Karvonen (%HRR) si user['hr_rest'] es válido (30..100)
           * si no, %HRmax.
       - Kcal: Keytel ajustado por intensidad (+ basal si KCAL_MODE='gross').
-      - Puntos: función potencia a partir de fracción de intensidad.
+      - Puntos: **por zona** (mapea Z1..Z5 a puntos por minuto) usando _MOOV_RATE.
     """
     def __init__(self):
         self._by_dev: dict[int, _Sess] = {}
@@ -231,7 +308,7 @@ class SessionStore:
             self._by_dev.pop(dev_id, None)
 
     def update(self, dev_id: int, user: dict | None, hr: int | None, ts_iso: str | None,
-               mode: str = "mixed"):
+               mode: str | None = None):
         """
         user esperado (si existe): {
             "dob": "YYYY-MM-DD", "edad": int (opcional/fallback),
@@ -267,10 +344,12 @@ class SessionStore:
             if sess.last_ts:
                 dt_min = max(0.0, (ts - sess.last_ts).total_seconds() / 60.0)
                 if dt_min > 0.0:
+                    # Kcal
                     rate_kcal = kcal_per_min_total(hr, edad, peso, sexo, frac, method, mode)
                     if rate_kcal > 0:
                         sess.kcal_total += rate_kcal * dt_min
-                    rate_mp = moov_rate_per_min_from_frac(frac, method)
+                    # Puntos por ZONA
+                    rate_mp = moov_rate_per_min_from_zone(zcode)
                     if rate_mp > 0:
                         sess.moov_total += rate_mp * dt_min
             sess.last_ts = ts

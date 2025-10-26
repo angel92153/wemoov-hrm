@@ -20,16 +20,56 @@ def _resolve_db(env_key: str, default_name: str) -> str:
 
 
 class Config:
-    # --- Seguridad ---
+    # ─────────────────────────────────────────────────────────────
+    # Seguridad
+    # ─────────────────────────────────────────────────────────────
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret")
 
-    # --- Rutas de DB (siempre dentro de app/db salvo que pases ABSOLUTAS) ---
+    # ─────────────────────────────────────────────────────────────
+    # Bases de datos (siempre dentro de app/db salvo rutas absolutas)
+    # ─────────────────────────────────────────────────────────────
     USERS_DB_PATH    = _resolve_db("USERS_DB", "users.db")
     SESSIONS_DB_PATH = _resolve_db("SESSIONS_DB", "sessions.db")
 
-    # --- Parámetros del sistema ---
-    HR_CACHE_TTL   = int(os.environ.get("HR_CACHE_TTL", "1"))
+    # ─────────────────────────────────────────────────────────────
+    # Métricas / Energía / Puntos
+    # (Agrupado para que todo lo “de números” esté junto)
+    # ─────────────────────────────────────────────────────────────
+    # KCAL_MODE:
+    #   - "net"   → kcal activas (Keytel ajustado)
+    #   - "gross" → kcal totales (activas + basal por MET)
+    KCAL_MODE = os.environ.get("KCAL_MODE", "gross")
+
+    # MET_REST:
+    #   - MET de reposo para el cómputo de basal en modo "gross".
+    #   - 1.0 ≈ ~1 kcal/kg/h (estándar)
+    MET_REST = float(os.environ.get("MET_REST", "1.0"))
+
+    # SESSION_MODE:
+    #   - Cómo ajustar el gasto por intensidad: "cardio" | "strength" | "mixed"
+    #   - mixed aplica factores por zona para simular fuerza/cardio combinado
+    SESSION_MODE = os.environ.get("SESSION_MODE", "mixed")
+
+    # Objetivo de puntos (traducción directa del mínimo/óptimo OMS a puntos)
+    #   MOOV_TARGET_POINTS: total de puntos del período (p.ej. al mes)
+    #   MOOV_TARGET_MINUTES_MOD: minutos de actividad MODERADA que “valen” ese total
+    #   MOOV_INTENSE_EQUIV: equivalencia intensa→moderada (OMS ≈ 2.0)
+    MOOV_TARGET_POINTS = int(os.environ.get("MOOV_TARGET_POINTS", "3000"))
+    MOOV_TARGET_MINUTES_MOD = int(os.environ.get("MOOV_TARGET_MINUTES_MOD", "300"))
+    MOOV_INTENSE_EQUIV = float(os.environ.get("MOOV_INTENSE_EQUIV", "2.0"))
+
+    # Escalado alrededor del valor “moderado”:
+    #   - Z2 un poco por debajo del valor moderado
+    #   - Z3 un poco por encima del valor moderado
+    #   - Z4 y Z5 puntúan como “intensa” (rate_mod * MOOV_INTENSE_EQUIV)
+    MOOV_Z2_FACTOR = float(os.environ.get("MOOV_Z2_FACTOR", "0.66"))
+    MOOV_Z3_FACTOR = float(os.environ.get("MOOV_Z3_FACTOR", "1.33"))
+
+    # ─────────────────────────────────────────────────────────────
+    # Parámetros del sistema (timings, caches, etc.)
+    # ─────────────────────────────────────────────────────────────
+    # TTL cache de HR (s) para proveedores reales/simulados
+    HR_CACHE_TTL = int(os.environ.get("HR_CACHE_TTL", "1"))
+
+    # Ventana de “reciente” para lecturas HR (ms) en /live
     LIVE_RECENT_MS = int(os.environ.get("LIVE_RECENT_MS", "45000"))
-    KCAL_MODE      = os.environ.get("KCAL_MODE", "gross")
-    MET_REST       = float(os.environ.get("MET_REST", "1.0"))
-    SESSION_MODE   = os.environ.get("SESSION_MODE", "mixed")

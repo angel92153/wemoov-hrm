@@ -6,7 +6,6 @@ from .config import Config
 from .utils.filters import register_template_filters
 from app.db.init_all import init_all
 
-
 def create_app(config_class: type[Config] = Config) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config.from_object(config_class)
@@ -15,14 +14,17 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.config["USERS_DB_PATH"] = config_class.USERS_DB_PATH
     app.config["SESSIONS_DB_PATH"] = config_class.SESSIONS_DB_PATH
 
-    # 1) Inicializa bases de datos dentro de app context
+    # 1) Inicializa bases de datos y métricas dentro de app context
     with app.app_context():
         init_all()
+        # <<< NUEVO: inicializar métricas desde la config de Flask >>>
+        from app.services import metrics as MET
+        MET.init_from_app(app)
 
     # 2) Filtros Jinja
     register_template_filters(app)
 
-    # 3) Importa y registra blueprints DESPUÉS de init_all()
+    # 3) Importa y registra blueprints DESPUÉS de init_all() e init_from_app()
     from .routes.screens import bp as screens_bp
     from .routes.users import bp as users_bp
     from .routes.live import bp as live_bp
