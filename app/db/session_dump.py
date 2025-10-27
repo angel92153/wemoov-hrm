@@ -1,49 +1,10 @@
 # app/db/session_dump.py
 from __future__ import annotations
-import sqlite3
 import time
 import json
 from typing import Dict, Any, List, Optional, Tuple
 
-SCHEMA = """
-PRAGMA journal_mode=WAL;
-
-CREATE TABLE IF NOT EXISTS session_runs (
-  id TEXT PRIMARY KEY,
-  started_at_ms INTEGER,
-  ended_at_ms   INTEGER,
-  meta_json     TEXT
-);
-
-CREATE TABLE IF NOT EXISTS session_device_totals (
-  run_id     TEXT,
-  dev_id     INTEGER,
-  user_id    INTEGER,
-  apodo      TEXT,
-  kcal_total REAL,
-  moov_total REAL,
-  PRIMARY KEY (run_id, dev_id),
-  FOREIGN KEY (run_id) REFERENCES session_runs(id) ON DELETE CASCADE
-);
-
-CREATE TABLE IF NOT EXISTS session_device_history (
-  run_id TEXT,
-  dev_id INTEGER,
-  user_id INTEGER,
-  ts_ms  INTEGER,
-  hr     INTEGER,
-  zone   TEXT,
-  FOREIGN KEY (run_id) REFERENCES session_runs(id) ON DELETE CASCADE
-);
-
--- Índices útiles para consultas típicas
-CREATE INDEX IF NOT EXISTS idx_hist_run_dev_ts ON session_device_history(run_id, dev_id, ts_ms);
-CREATE INDEX IF NOT EXISTS idx_hist_run_user ON session_device_history(run_id, user_id);
-CREATE INDEX IF NOT EXISTS idx_totals_run_user ON session_device_totals(run_id, user_id);
-"""
-
-def _ensure_schema(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA)
+from app.db.connection import get_conn  # ✅ usamos el helper común (PRAGMAs coherentes)
 
 def _infer_started_ended_ms(
     data: Dict[int, Dict[str, Any]],
@@ -79,7 +40,7 @@ def dump_session_to_db(
     Persiste una sesión completa (totales + historial por dispositivo/usuario).
 
     Parámetros:
-      - db_path: ruta del SQLite (SESSIONS_DB_PATH).
+      - db_path: ruta del SQLite (SESSION_RUNS_DB_PATH).
       - data: resultado de SessionStore.export_state(), con formato:
           {
             dev_id: {
@@ -91,7 +52,7 @@ def dump_session_to_db(
             ...
           }
       - run_id: identificador lógico de la sesión (opcional).
-      - started_at_ms / ended_at_ms: tiempos de la sesión en ms (opcional).
+      - started_at_ms / ended_at_ms: tiempos en ms (opcional).
       - meta_json: JSON string con metadatos del run (opcional).
     """
     if not data:
@@ -100,24 +61,24 @@ def dump_session_to_db(
     rid = run_id or f"run_{int(time.time()*1000)}"
     started, ended = _infer_started_ended_ms(data, started_at_ms, ended_at_ms)
 
-    conn = sqlite3.connect(db_path)
-    try:
-        _ensure_schema(conn)
+    # ✅ Usamos get_conn para tener PRAGMAs coherentes + commit automático
+    with get_conn(db_path) as conn:
         cur = conn.cursor()
 
-        # Upsert cabecera del run
+        # Cabecera del run (upsert)
         cur.execute(
             "INSERT OR REPLACE INTO session_runs (id, started_at_ms, ended_at_ms, meta_json) VALUES (?,?,?,?)",
             (rid, started, ended, meta_json or None),
         )
 
-        # Totales por device (incluye user_id y apodo)
+        # Totales por device
         for dev_id, payload in data.items():
             user = payload.get("user") or {}
             user_id = user.get("id")
             apodo = user.get("apodo")
             cur.execute(
-                "INSERT OR REPLACE INTO session_device_totals (run_id, dev_id, user_id, apodo, kcal_total, moov_total) "
+                "INSERT OR REPLACE INTO session_device_totals "
+                "(run_id, dev_id, user_id, apodo, kcal_total, moov_total) "
                 "VALUES (?,?,?,?,?,?)",
                 (
                     rid,
@@ -154,10 +115,6 @@ def dump_session_to_db(
                 rows,
             )
 
-        conn.commit()
-    finally:
-        conn.close()
-
 def dump_status_meta(
     db_path: str,
     run_id: str,
@@ -169,17 +126,18 @@ def dump_status_meta(
     (Opcional) Actualiza meta_json de session_runs con un objeto `status_obj`.
     Si merge=True, intentará combinar con el meta_json existente.
     """
-    conn = sqlite3.connect(db_path)
-    try:
+    with get_conn(db_path) as conn:
         cur = conn.cursor()
 
         if merge:
             cur.execute("SELECT meta_json FROM session_runs WHERE id = ?", (run_id,))
             row = cur.fetchone()
             base = {}
-            if row and row[0]:
+            # row puede ser sqlite3.Row o tuplas
+            existing = row["meta_json"] if (row and isinstance(row, dict)) else (row[0] if row else None)
+            if existing:
                 try:
-                    base = json.loads(row[0])
+                    base = json.loads(existing)
                 except Exception:
                     base = {}
             if isinstance(status_obj, dict):
@@ -189,6 +147,3 @@ def dump_status_meta(
             meta = json.dumps(status_obj or {}, separators=(",", ":"))
 
         cur.execute("UPDATE session_runs SET meta_json=? WHERE id=?", (meta, run_id))
-        conn.commit()
-    finally:
-        conn.close()

@@ -1,16 +1,21 @@
 # app/db/summary_query.py
 from __future__ import annotations
 from typing import Dict, Any, List, Optional, Tuple
-from collections import defaultdict
+from collections import defaultdict, Counter
 from statistics import mean
+import json
 
 from app.db.repos import UsersRepo
-from app.db.connection import get_conn
+from app.db.connection import get_conn, get_summaries_conn
 from app.services.metrics_core import (
     _edad_from_user,
     hrmax_from_user_or_estimada,
     frac_hrmax,
 )
+
+# ─────────────────────────────────────────────────────────────
+# Helpers (DB cruda -> on-the-fly)
+# ─────────────────────────────────────────────────────────────
 
 def _get_last_run(con) -> Optional[Dict[str, Any]]:
     cur = con.cursor()
@@ -19,11 +24,24 @@ def _get_last_run(con) -> Optional[Dict[str, Any]]:
     ).fetchone()
     if not row:
         return None
-    # row puede ser Row o dict; normalizamos a dict
     rid = row["id"] if isinstance(row, dict) else row[0]
     started = row["started_at_ms"] if isinstance(row, dict) else row[1]
     ended = row["ended_at_ms"] if isinstance(row, dict) else row[2]
     return {"id": rid, "started_at_ms": started, "ended_at_ms": ended}
+
+def _get_run(con, run_id: str) -> Optional[Dict[str, Any]]:
+    cur = con.cursor()
+    row = cur.execute(
+        "SELECT id, started_at_ms, ended_at_ms, meta_json FROM session_runs WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+    if not row:
+        return None
+    rid     = row["id"] if isinstance(row, dict) else row[0]
+    started = row["started_at_ms"] if isinstance(row, dict) else row[1]
+    ended   = row["ended_at_ms"] if isinstance(row, dict) else row[2]
+    meta    = row["meta_json"] if isinstance(row, dict) else row[3]
+    return {"id": rid, "started_at_ms": started, "ended_at_ms": ended, "meta_json": meta}
 
 def _load_totals(con, run_id: str) -> List[Dict[str, Any]]:
     cur = con.cursor()
@@ -52,9 +70,7 @@ def _load_totals(con, run_id: str) -> List[Dict[str, Any]]:
     return out
 
 def _load_history(con, run_id: str) -> Dict[int, List[Dict[str, Any]]]:
-    """
-    Devuelve: { dev_id: [ {ts, hr, zone}, ... ] }
-    """
+    """Devuelve: { dev_id: [ {ts, hr, zone}, ... ] }"""
     cur = con.cursor()
     rows = cur.execute(
         """
@@ -81,8 +97,8 @@ def _load_history(con, run_id: str) -> Dict[int, List[Dict[str, Any]]]:
 def _bucketize(rows: List[Dict[str, Any]], bucket_ms: int, hr_max: int) -> Tuple[List[Dict[str, Any]], float]:
     """
     Bucketiza por bucket_ms y calcula:
-      - por bucket: t, zone_mode (más frecuente), hr_avg, frac (0..1)
-      - global: session_frac_avg (media ponderada por muestras)
+      - por bucket: t, zone_mode (moda), hr_avg, frac(0..1)
+      - global: session_frac_avg (media ponderada por nº muestras)
     """
     if not rows:
         return [], 0.0
@@ -91,9 +107,7 @@ def _bucketize(rows: List[Dict[str, Any]], bucket_ms: int, hr_max: int) -> Tuple
 
     buckets: Dict[int, Dict[str, Any]] = {}
     for r in rows:
-        ts = r.get("ts")
-        hr = r.get("hr")
-        z  = r.get("zone") or "Z1"
+        ts = r.get("ts"); hr = r.get("hr"); z = r.get("zone") or "Z1"
         if ts is None or hr is None:
             continue
         t0 = (int(ts) // bucket_ms) * bucket_ms
@@ -119,8 +133,7 @@ def _bucketize(rows: List[Dict[str, Any]], bucket_ms: int, hr_max: int) -> Tuple
         fracs.append((frac, len(b["hrs"])))
 
     if fracs:
-        num = sum(f * w for f, w in fracs)
-        den = sum(w for _, w in fracs) or 1
+        num = sum(f * w for f, w in fracs); den = sum(w for _, w in fracs) or 1
         session_frac_avg = float(num) / float(den)
     else:
         session_frac_avg = 0.0
@@ -129,24 +142,16 @@ def _bucketize(rows: List[Dict[str, Any]], bucket_ms: int, hr_max: int) -> Tuple
 
 def load_last_run_summary(db_path: str, users_repo: UsersRepo, bucket_ms: int = 5000) -> Dict[str, Any]:
     """
-    Devuelve resumen de la ÚLTIMA sesión (por ended_at_ms):
+    Devuelve resumen de la ÚLTIMA sesión (por ended_at_ms) con detalle por-device:
     {
       "run": {"id": str, "started_at_ms": int, "ended_at_ms": int},
       "devices": [
         {
           "dev": int,
           "user": {"id": int|None, "apodo": str},
-          "metrics": {
-            "pct_avg": int,    # media %HRmax sesión
-            "kcal": float,
-            "points": float
-          },
-          "timeline": [       # buckets para relief: usar 'zone_mode' y 'frac' (0..1)
-            {"t": int, "zone_mode": "Z3", "frac": 0.74},
-            ...
-          ]
-        },
-        ...
+          "metrics": { "pct_avg": int, "kcal": float, "points": float },
+          "timeline": [ {"t": int, "zone_mode": "Z3", "frac": 0.74, "hr_avg": 123.4}, ... ]
+        }
       ]
     }
     """
@@ -162,6 +167,7 @@ def load_last_run_summary(db_path: str, users_repo: UsersRepo, bucket_ms: int = 
         for row in totals:
             dev_id = row["dev_id"]
             uid = row["user_id"]
+
             # cargar usuario para calcular HRmax
             user = None
             if isinstance(uid, int):
@@ -189,3 +195,469 @@ def load_last_run_summary(db_path: str, users_repo: UsersRepo, bucket_ms: int = 
             })
 
         return {"run": run, "devices": devices_out}
+
+# ─────────────────────────────────────────────────────────────
+# Persistencia (GLOBAL + PER-DEVICE en summaries.db)
+# ─────────────────────────────────────────────────────────────
+
+def _merge_device_timelines(devices: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Funde timelines por 't':
+      - frac: media de fracs del bucket entre dispositivos
+      - zone_mode: moda entre devices
+      - hr_avg: media (opcional)
+    """
+    if not devices:
+        return []
+    by_t: Dict[int, Dict[str, Any]] = defaultdict(lambda: {"fracs": [], "zones": [], "hrs": []})
+    for d in devices:
+        for item in (d.get("timeline") or []):
+            t = item.get("t")
+            if t is None:
+                continue
+            t = int(t)
+            frac = item.get("frac")
+            hr = item.get("hr_avg")
+            z = item.get("zone_mode")
+            if isinstance(frac, (int, float)):
+                by_t[t]["fracs"].append(float(frac))
+            if isinstance(hr, (int, float)):
+                by_t[t]["hrs"].append(float(hr))
+            if isinstance(z, str):
+                by_t[t]["zones"].append(z)
+
+    merged = []
+    for t in sorted(by_t.keys()):
+        fracs = by_t[t]["fracs"]
+        hrs = by_t[t]["hrs"]
+        zones = by_t[t]["zones"]
+        if not (fracs or zones):
+            continue
+        avg_frac = float(mean(fracs)) if fracs else 0.0
+        avg_hr = float(mean(hrs)) if hrs else 0.0
+        zone = Counter(zones).most_common(1)[0][0] if zones else "Z1"
+        merged.append({
+            "t": t,
+            "frac": round(avg_frac, 4),
+            "hr_avg": round(avg_hr, 2),
+            "zone_mode": zone,
+        })
+    return merged
+
+def _upsert_run_summary(
+    *,
+    run_id: str,
+    started_at_ms: int,
+    ended_at_ms: int,
+    pct_avg: float,          # 0..1
+    kcal_total: float,
+    moov_total: float,
+    bucket_ms: int,
+    timeline: List[Dict[str, Any]],
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Inserta/actualiza resumen GLOBAL (tabla run_summaries)."""
+    with get_summaries_conn() as con:
+        con.execute(
+            """
+            INSERT INTO run_summaries
+              (run_id, started_at_ms, ended_at_ms, pct_avg, kcal_total, moov_total, bucket_ms, timeline_json, meta_json)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(run_id) DO UPDATE SET
+              started_at_ms=excluded.started_at_ms,
+              ended_at_ms=excluded.ended_at_ms,
+              pct_avg=excluded.pct_avg,
+              kcal_total=excluded.kcal_total,
+              moov_total=excluded.moov_total,
+              bucket_ms=excluded.bucket_ms,
+              timeline_json=excluded.timeline_json,
+              meta_json=excluded.meta_json
+            """,
+            (
+                run_id,
+                int(started_at_ms),
+                int(ended_at_ms),
+                float(pct_avg),
+                float(kcal_total),
+                float(moov_total),
+                int(bucket_ms),
+                json.dumps(timeline or [], separators=(",", ":")),
+                (json.dumps(meta, separators=(",", ":")) if meta is not None else None),
+            ),
+        )
+
+def _upsert_run_summary_device(
+    *,
+    run_id: str,
+    dev: int,
+    user_id: int | None,
+    apodo: str,
+    pct_avg: int,   # 0..100
+    kcal: float,
+    points: float
+) -> None:
+    """Inserta/actualiza métricas por dispositivo (tabla run_summaries_devices)."""
+    with get_summaries_conn() as con:
+        con.execute(
+            """
+            INSERT INTO run_summaries_devices (run_id, dev, user_id, apodo, pct_avg, kcal, points)
+            VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(run_id, dev) DO UPDATE SET
+              user_id=excluded.user_id,
+              apodo=excluded.apodo,
+              pct_avg=excluded.pct_avg,
+              kcal=excluded.kcal,
+              points=excluded.points
+            """,
+            (run_id, int(dev), user_id, apodo, int(pct_avg), float(kcal), float(points)),
+        )
+
+def _insert_run_summary_device_timeline(*, run_id: str, dev: int, timeline: List[Dict[str, Any]]) -> None:
+    """Inserta timeline por dispositivo (tabla run_summaries_devices_timeline)."""
+    if not timeline:
+        return
+    rows = [
+        (run_id, int(dev), int(b.get("t") or 0),
+         float(b.get("frac") or 0.0), str(b.get("zone_mode") or "Z1"))
+        for b in timeline if isinstance(b, dict)
+    ]
+    with get_summaries_conn() as con:
+        con.executemany(
+            "INSERT INTO run_summaries_devices_timeline (run_id, dev, t, frac, zone_mode) VALUES (?,?,?,?,?)",
+            rows,
+        )
+
+def compute_and_store_last_run_summary(
+    sessions_runs_db_path: str,   # ← SESSION_RUNS_DB_PATH (crudo)
+    users_repo: UsersRepo,
+    *,
+    bucket_ms: int = 5000,
+    meta: Optional[dict] = None,
+) -> Optional[str]:
+    """
+    1) Usa load_last_run_summary(...) (detalle por-dev)
+    2) Agrega a nivel GLOBAL (kcal/points totales, %HRmax medio, timeline fusionada)
+    3) Persiste:
+       - GLOBAL en run_summaries
+       - POR-DEVICE en run_summaries_devices + run_summaries_devices_timeline
+    Devuelve run_id si se guardó algo.
+    """
+    front = load_last_run_summary(sessions_runs_db_path, users_repo, bucket_ms=bucket_ms)
+    run = front.get("run") or {}
+    devices = front.get("devices") or []
+    if not run or not devices:
+        return None
+
+    run_id = run.get("id")
+    started_at_ms = int(run.get("started_at_ms") or 0)
+    ended_at_ms = int(run.get("ended_at_ms") or 0)
+
+    total_kcal = 0.0
+    total_points = 0.0
+    pct_list: List[float] = []
+
+    for d in devices:
+        m = d.get("metrics") or {}
+        total_kcal += float(m.get("kcal") or 0.0)
+        total_points += float(m.get("points") or 0.0)
+        if isinstance(m.get("pct_avg"), (int, float)):
+            pct_list.append(float(m["pct_avg"]))  # viene 0..100
+
+    pct_avg_global = (mean(pct_list) / 100.0) if pct_list else 0.0  # guardamos 0..1
+    merged_timeline = _merge_device_timelines(devices)
+
+    # 1) Global (compat + auditoría)
+    _upsert_run_summary(
+        run_id=run_id,
+        started_at_ms=started_at_ms,
+        ended_at_ms=ended_at_ms,
+        pct_avg=float(round(pct_avg_global, 4)),
+        kcal_total=float(round(total_kcal, 1)),
+        moov_total=float(round(total_points, 1)),
+        bucket_ms=int(bucket_ms),
+        timeline=merged_timeline,
+        meta=meta,
+    )
+
+    # 2) Per-device + timelines (limpiamos primero para idempotencia por run_id)
+    with get_summaries_conn() as con:
+        con.execute("DELETE FROM run_summaries_devices WHERE run_id = ?", (run_id,))
+        con.execute("DELETE FROM run_summaries_devices_timeline WHERE run_id = ?", (run_id,))
+
+    for d in devices:
+        dev_id = int(d.get("dev"))
+        user = d.get("user") or {}
+        uid = user.get("id") if isinstance(user.get("id"), int) else None
+        apodo = (user.get("apodo") or f"ID {dev_id}").strip()
+        m = d.get("metrics") or {}
+        pct_i = int(round(float(m.get("pct_avg") or 0)))
+        kcal = float(m.get("kcal") or 0.0)
+        pts  = float(m.get("points") or 0.0)
+        tl   = d.get("timeline") or []
+
+        _upsert_run_summary_device(
+            run_id=run_id, dev=dev_id, user_id=uid, apodo=apodo,
+            pct_avg=pct_i, kcal=kcal, points=pts
+        )
+        _insert_run_summary_device_timeline(run_id=run_id, dev=dev_id, timeline=tl)
+
+    return run_id
+
+# ─────────────────────────────────────────────────────────────
+# Lectura de lo persistido (para el front) — PER-DEVICE
+# ─────────────────────────────────────────────────────────────
+
+def load_last_persisted_summary_devices() -> Dict[str, Any]:
+    """
+    Lee el ÚLTIMO run de summaries.db y devuelve el shape por dispositivo
+    que espera el front:
+    {
+      "run": {...},
+      "devices": [
+        {"dev": 101, "user": {"id": 7, "apodo": "ANA"},
+         "metrics": {"pct_avg": 87, "kcal": 245.0, "points": 62.0},
+         "timeline": [{"t": 1729958400000, "frac": 0.72, "zone_mode": "Z3"}]
+        }, ...
+      ],
+      "bucket_ms": 5000,
+      "meta": {...},
+      "global": {...},     # opcional (compat)
+      "timeline": [...]    # opcional (compat)
+    }
+    """
+    with get_summaries_conn() as con:
+        row = con.execute(
+            """
+            SELECT run_id, started_at_ms, ended_at_ms, pct_avg, kcal_total, moov_total,
+                   bucket_ms, timeline_json, meta_json
+            FROM run_summaries
+            ORDER BY ended_at_ms DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+        if not row:
+            return {"run": None, "devices": [], "bucket_ms": 5000, "meta": None, "global": None, "timeline": []}
+
+        run_id     = row["run_id"] if isinstance(row, dict) else row[0]
+        started_ms = row["started_at_ms"] if isinstance(row, dict) else row[1]
+        ended_ms   = row["ended_at_ms"]   if isinstance(row, dict) else row[2]
+        pct01      = row["pct_avg"]       if isinstance(row, dict) else row[3]
+        kcal_tot   = row["kcal_total"]    if isinstance(row, dict) else row[4]
+        moov_tot   = row["moov_total"]    if isinstance(row, dict) else row[5]
+        bucket_ms  = row["bucket_ms"]     if isinstance(row, dict) else row[6]
+        tline_js   = row["timeline_json"] if isinstance(row, dict) else row[7]
+        meta_js    = row["meta_json"]     if isinstance(row, dict) else row[8]
+
+        # leer per-device
+        dev_rows = con.execute(
+            """
+            SELECT dev, user_id, apodo, pct_avg, kcal, points
+            FROM run_summaries_devices
+            WHERE run_id = ?
+            ORDER BY dev ASC
+            """,
+            (run_id,),
+        ).fetchall()
+
+        devices: List[Dict[str, Any]] = []
+        for dr in dev_rows:
+            dev    = dr["dev"] if isinstance(dr, dict) else dr[0]
+            uid    = dr["user_id"] if isinstance(dr, dict) else dr[1]
+            apodo  = dr["apodo"] if isinstance(dr, dict) else dr[2]
+            pct    = dr["pct_avg"] if isinstance(dr, dict) else dr[3]  # 0..100
+            kcal   = dr["kcal"] if isinstance(dr, dict) else dr[4]
+            points = dr["points"] if isinstance(dr, dict) else dr[5]
+
+            tl_rows = con.execute(
+                """
+                SELECT t, frac, zone_mode
+                FROM run_summaries_devices_timeline
+                WHERE run_id = ? AND dev = ?
+                ORDER BY t ASC
+                """,
+                (run_id, dev),
+            ).fetchall()
+
+            timeline = []
+            for tr in tl_rows:
+                t    = tr["t"] if isinstance(tr, dict) else tr[0]
+                frac = tr["frac"] if isinstance(tr, dict) else tr[1]   # 0..1
+                zone = tr["zone_mode"] if isinstance(tr, dict) else tr[2]
+                timeline.append({"t": int(t), "frac": float(frac), "zone_mode": str(zone or "Z1")})
+
+            devices.append({
+                "dev": int(dev),
+                "user": {"id": (int(uid) if uid is not None else None), "apodo": (apodo or f"ID {dev}")},
+                "metrics": {"pct_avg": int(pct or 0), "kcal": float(kcal or 0.0), "points": float(points or 0.0)},
+                "timeline": timeline,
+            })
+
+        # compat legacy (global+timeline)
+        try:
+            tline_global = json.loads(tline_js) if tline_js else []
+        except Exception:
+            tline_global = []
+        try:
+            meta = json.loads(meta_js) if meta_js else None
+        except Exception:
+            meta = None
+
+        return {
+            "run": {"id": run_id, "started_at_ms": int(started_ms or 0), "ended_at_ms": int(ended_ms or 0)},
+            "devices": devices,
+            "bucket_ms": int(bucket_ms or 5000),
+            "meta": meta,
+            "global": {
+                "pct_avg": int(round(float(pct01 or 0.0) * 100.0)),
+                "kcal": float(kcal_tot or 0.0),
+                "points": float(moov_tot or 0.0),
+            },
+            "timeline": tline_global,
+        }
+
+# ─────────────────────────────────────────────────────────────
+# Utilidades de backfill (opcional)
+# ─────────────────────────────────────────────────────────────
+
+def list_run_ids(db_path: str) -> List[Tuple[str, int]]:
+    """Devuelve [(run_id, ended_at_ms), ...] ordenados por ended_at_ms ASC."""
+    with get_conn(db_path) as con:
+        rows = con.execute(
+            "SELECT id, ended_at_ms FROM session_runs ORDER BY ended_at_ms ASC"
+        ).fetchall()
+        out = []
+        for r in rows:
+            rid = r["id"] if isinstance(r, dict) else r[0]
+            end = r["ended_at_ms"] if isinstance(r, dict) else r[1]
+            out.append((str(rid), int(end) if end is not None else 0))
+        return out
+
+def compute_and_store_summary_for_run(
+    session_runs_db_path: str,
+    users_repo: UsersRepo,
+    run_id: str,
+    *,
+    bucket_ms: int = 5000,
+    override_meta: dict | None = None,
+) -> dict:
+    """
+    Calcula y persiste el summary GLOBAL y POR-DEVICE para un run concreto.
+    Útil para backfill puntual.
+    """
+    with get_conn(session_runs_db_path) as con:
+        run = _get_run(con, run_id)
+        if not run:
+            return {"ok": False, "reason": "run_not_found", "run_id": run_id}
+        totals = _load_totals(con, run_id)
+        hist   = _load_history(con, run_id)
+
+    kcal_total = 0.0
+    moov_total = 0.0
+    timelines_all: List[Dict[str, Any]] = []
+    fracs_weighted: List[Tuple[float, int]] = []
+
+    # Limpiar per-device previos para este run (idempotencia)
+    with get_summaries_conn() as scon:
+        scon.execute("DELETE FROM run_summaries_devices WHERE run_id = ?", (run_id,))
+        scon.execute("DELETE FROM run_summaries_devices_timeline WHERE run_id = ?", (run_id,))
+
+    for row in totals:
+        dev_id = row["dev_id"]
+        uid = row["user_id"]
+        kcal_total += float(row["kcal_total"] or 0.0)
+        moov_total += float(row["moov_total"] or 0.0)
+
+        user = users_repo.get(uid) if isinstance(uid, int) else {}
+        edad = _edad_from_user(user)
+        hrmax_user = user.get("hr_max") if user else None
+        hr_max = hrmax_from_user_or_estimada(edad, hrmax_user)
+
+        rows_dev = hist.get(dev_id, [])
+        if not rows_dev:
+            # aun así inserta fila per-device con 0s para consistencia
+            _upsert_run_summary_device(
+                run_id=run_id, dev=int(dev_id),
+                user_id=(int(uid) if isinstance(uid, int) else None),
+                apodo=(row["apodo"] or f"ID {dev_id}"),
+                pct_avg=0, kcal=float(row["kcal_total"] or 0.0), points=float(row["moov_total"] or 0.0)
+            )
+            continue
+
+        buckets: Dict[int, Dict[str, Any]] = {}
+        for r in rows_dev:
+            ts = r.get("ts"); hr = r.get("hr"); z  = r.get("zone") or "Z1"
+            if ts is None or hr is None:
+                continue
+            t0 = (int(ts)//bucket_ms)*bucket_ms
+            b = buckets.get(t0)
+            if b is None:
+                b = {"t": t0, "hrs": [], "zones": {}}
+                buckets[t0] = b
+            b["hrs"].append(int(hr))
+            zi = {"Z1":1,"Z2":2,"Z3":3,"Z4":4,"Z5":5}.get(z,1)
+            b["zones"][zi] = b["zones"].get(zi,0)+1
+
+        ordered = []
+        fracs_local = []
+        for t0 in sorted(buckets.keys()):
+            b = buckets[t0]
+            if not b["hrs"]:
+                continue
+            hr_avg = mean(b["hrs"])
+            zi = max(b["zones"].items(), key=lambda kv: kv[1])[0] if b["zones"] else 1
+            zone_mode = {1:"Z1",2:"Z2",3:"Z3",4:"Z4",5:"Z5"}.get(zi,"Z1")
+            frac = frac_hrmax(hr_avg, hr_max) if hr_max else 0.0
+            ordered.append({"t": t0, "zone_mode": zone_mode, "hr_avg": round(hr_avg,2), "frac": round(float(frac),4)})
+            fracs_local.append(frac)
+
+        timelines_all.extend(ordered)
+        for b in ordered:
+            fracs_weighted.append((b["frac"], 1))
+
+        pct_avg_dev = int(round((mean(fracs_local) if fracs_local else 0.0) * 100.0))
+
+        _upsert_run_summary_device(
+            run_id=run_id, dev=int(dev_id),
+            user_id=(int(uid) if isinstance(uid, int) else None),
+            apodo=(row["apodo"] or f"ID {dev_id}"),
+            pct_avg=pct_avg_dev,
+            kcal=float(row["kcal_total"] or 0.0),
+            points=float(row["moov_total"] or 0.0),
+        )
+        _insert_run_summary_device_timeline(run_id=run_id, dev=int(dev_id), timeline=ordered)
+
+    if fracs_weighted:
+        num = sum(f*w for f,w in fracs_weighted); den = sum(w for _,w in fracs_weighted) or 1
+        pct_avg = num/den
+    else:
+        pct_avg = 0.0
+
+    meta = override_meta
+    if meta is None:
+        try:
+            meta = json.loads(run.get("meta_json") or "{}")
+        except Exception:
+            meta = None
+
+    _upsert_run_summary(
+        run_id=run_id,
+        started_at_ms=int(run["started_at_ms"] or 0),
+        ended_at_ms=int(run["ended_at_ms"] or 0),
+        pct_avg=float(pct_avg),
+        kcal_total=float(kcal_total),
+        moov_total=float(moov_total),
+        bucket_ms=int(bucket_ms),
+        timeline=timelines_all,
+        meta=meta,
+    )
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "pct_avg": pct_avg,
+        "kcal_total": kcal_total,
+        "moov_total": moov_total,
+        "bucket_ms": bucket_ms,
+        "timeline_len": len(timelines_all),
+    }

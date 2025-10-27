@@ -30,7 +30,8 @@ class Config:
     # ─────────────────────────────────────────────────────────────
     USERS_DB_PATH    = _resolve_db("USERS_DB", "users.db")
     SESSIONS_DB_PATH = _resolve_db("SESSIONS_DB", "sessions.db")
-
+    SESSION_RUNS_DB_PATH = _resolve_db("SESSION_RUNS_DB", "session_runs.db")  # NUEVA (crudo)
+    SUMMARIES_DB_PATH    = _resolve_db("SUMMARIES_DB", "summaries.db")        # NUEVA (resúmenes)
     # ─────────────────────────────────────────────────────────────
     # Métricas / Energía / Puntos
     # ─────────────────────────────────────────────────────────────
@@ -39,7 +40,7 @@ class Config:
     SESSION_MODE = os.environ.get("SESSION_MODE", "mixed") # "cardio" | "strength" | "mixed"
 
     # Objetivos de puntos (OMS → Moov)
-    MOOV_TARGET_POINTS = int(os.environ.get("MOOV_TARGET_POINTS", "3000"))
+    MOOV_TARGET_POINTS = int(os.environ.get("MOOV_TARGET_POINTS", "1300"))
     MOOV_TARGET_MINUTES_MOD = int(os.environ.get("MOOV_TARGET_MINUTES_MOD", "300"))
     MOOV_INTENSE_EQUIV = float(os.environ.get("MOOV_INTENSE_EQUIV", "2.0"))
     MOOV_Z2_FACTOR = float(os.environ.get("MOOV_Z2_FACTOR", "0.66"))
@@ -69,6 +70,8 @@ class Config:
     HR_HISTORY_PURGE_ON_END = True
     HISTORY_REPEAT_LAST_IF_IDLE = 1
     SUMMARY_SHOW_MS = 600000  # 15s mostrando la tarjeta-resumen tras acabar la sesión
+    SUMMARY_BUCKET_MS = int(os.getenv("SUMMARY_BUCKET_MS", "5000"))
+  
 
 
     

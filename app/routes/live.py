@@ -13,7 +13,9 @@ from app.services.session_store import (
     _STORE,
 )
 from app.db.session_dump import dump_session_to_db
-from app.db.summary_query import load_last_run_summary  # ⬅️ NUEVO
+from app.db.summary_query import load_last_run_summary  # cálculo on-the-fly para el front
+# 🔸 para el resumen persistido per-user:
+from app.db.summary_query import load_last_persisted_summary_devices
 
 # 🔸 Importa SESSION para leer phase/status (opcional)
 try:
@@ -159,6 +161,73 @@ def _update_sim_phase(prov: Any) -> None:
 
 
 # -------------------------
+# Helpers de persistencia (evitan código duplicado)
+# -------------------------
+def _extract_run_info_from_status(status: dict | None) -> tuple[Optional[str], Optional[int]]:
+    """Saca run_id y started_at_ms del status (con todos tus fallbacks)."""
+    if not isinstance(status, dict):
+        return None, None
+    run_id = status.get("session_id") or status.get("id")
+    started_at_ms = None
+    for k in ("class_start_ms", "t0_ms"):
+        v = status.get(k)
+        if isinstance(v, int):
+            started_at_ms = v
+            break
+    if started_at_ms is None:
+        for k in ("class_t0", "phase_t0"):
+            v = status.get(k)
+            if isinstance(v, str):
+                try:
+                    started_at_ms = int(datetime.fromisoformat(v.replace("Z","+00:00"))
+                                        .astimezone(timezone.utc).timestamp() * 1000)
+                    break
+                except Exception:
+                    pass
+    return run_id, started_at_ms
+
+def _persist_session_and_summary(data: dict, status: dict | None) -> None:
+    """
+    1) Vuelca crudo a SESSION_RUNS_DB_PATH (session_dump)
+    2) Calcula y guarda summary (global + per-user) en SUMMARIES_DB_PATH (best-effort)
+    """
+    from app.db.repos import UsersRepo
+    from app.db.summary_query import compute_and_store_last_run_summary
+
+    # Extraer info de run
+    run_id, started_at_ms = _extract_run_info_from_status(status)
+    ended_at_ms = int(time.time() * 1000)
+
+    # Serializar meta (si viene)
+    try:
+        meta_str = json.dumps(status, separators=(",", ":")) if status else None
+    except Exception:
+        meta_str = None
+
+    # 1) Guardar crudo
+    dump_session_to_db(
+        current_app.config["SESSION_RUNS_DB_PATH"],
+        data,
+        run_id=run_id,
+        started_at_ms=started_at_ms,
+        ended_at_ms=ended_at_ms,
+        meta_json=meta_str,
+    )
+
+    # 2) Guardar summary (best-effort)
+    try:
+        users_repo = UsersRepo(current_app.config["USERS_DB_PATH"])
+        compute_and_store_last_run_summary(
+            current_app.config["SESSION_RUNS_DB_PATH"],           # lee del crudo
+            users_repo,
+            bucket_ms=int(current_app.config.get("SUMMARY_BUCKET_MS", 5000)),
+            meta=status,                                          # meta como dict
+        )
+    except Exception as e:
+        current_app.logger.warning(f"summary_store_failed: {e}")
+
+
+# -------------------------
 # Snapshot builder
 # -------------------------
 def _build_live_snapshot(users_repo, prov, limit, recent_ms):
@@ -281,44 +350,9 @@ def live():
         clear_sessions()
 
     if prev_active is True and not session_active:
-        # fin de sesión -> exporta a DB y limpia el store
+        # fin de sesión -> exporta a DB (crudo) y guarda summary; luego limpia el store
         def _persist_fn(data):
-            run_id = None
-            started_at_ms = None
-            meta = None
-            try:
-                status = st or {}
-                run_id = status.get("session_id") or status.get("id")
-                # intenta inferir inicio (ms)
-                for k in ("class_start_ms", "t0_ms"):
-                    v = status.get(k)
-                    if isinstance(v, int):
-                        started_at_ms = v
-                        break
-                if started_at_ms is None:
-                    # intenta parsear ISO
-                    for k in ("class_t0", "phase_t0"):
-                        v = status.get(k)
-                        if isinstance(v, str):
-                            try:
-                                started_at_ms = int(datetime.fromisoformat(v.replace("Z","+00:00"))
-                                                    .astimezone(timezone.utc).timestamp()*1000)
-                                break
-                            except Exception:
-                                pass
-                # opcional: guarda el status completo como metadatos
-                meta = json.dumps(status, separators=(',',':'))
-            except Exception:
-                pass
-
-            dump_session_to_db(
-                current_app.config["SESSIONS_DB_PATH"],
-                data,
-                run_id=run_id,
-                started_at_ms=started_at_ms,
-                ended_at_ms=int(time.time() * 1000),
-                meta_json=meta
-            )
+            _persist_session_and_summary(data, st or {})
         export_and_clear_sessions(_persist_fn)
 
     current_app._LAST_SESSION_ACTIVE = session_active
@@ -370,31 +404,7 @@ def live_stream():
         if prev_active is True and not session_active:
             def _persist_fn(data):
                 status = _session_state() or {}
-                run_id = status.get("session_id") or status.get("id")
-                started_at_ms = None
-                for k in ("class_start_ms", "t0_ms"):
-                    v = status.get(k)
-                    if isinstance(v, int):
-                        started_at_ms = v
-                        break
-                if started_at_ms is None:
-                    for k in ("class_t0", "phase_t0"):
-                        v = status.get(k)
-                        if isinstance(v, str):
-                            try:
-                                started_at_ms = int(datetime.fromisoformat(v.replace("Z","+00:00"))
-                                                    .astimezone(timezone.utc).timestamp()*1000)
-                                break
-                            except Exception:
-                                pass
-                dump_session_to_db(
-                    current_app.config["SESSIONS_DB_PATH"],
-                    data,
-                    run_id=run_id,
-                    started_at_ms=started_at_ms,
-                    ended_at_ms=int(time.time() * 1000),
-                    meta_json=json.dumps(status, separators=(',',':'))
-                )
+                _persist_session_and_summary(data, status)
             export_and_clear_sessions(_persist_fn)
         current_app._LAST_SESSION_ACTIVE = session_active
         return out
@@ -481,15 +491,13 @@ def live_zone_timeline():
 
 
 # -------------------------
-# /live/summary (post-session)
+# /live/summary (on-the-fly, compat)
 # -------------------------
 @bp.get("/live/summary")
 def live_summary():
     """
-    Devuelve el resumen de la ÚLTIMA sesión guardada en DB:
-      - %HRmax medio de sesión (pct_avg)
-      - kcal y puntos totales
-      - timeline bucketizada con 'zone_mode' y 'frac' (0..1) para relieve
+    Devuelve el resumen on-the-fly desde la DB cruda (compat).
+    Nota: el front debe usar /live/summary/persisted.
     """
     users_repo = UsersRepo(current_app.config["USERS_DB_PATH"])
     try:
@@ -499,10 +507,29 @@ def live_summary():
 
     try:
         data = load_last_run_summary(
-            current_app.config["SESSIONS_DB_PATH"],
+            current_app.config["SESSION_RUNS_DB_PATH"],  # lee de la DB de runs cruda
             users_repo,
             bucket_ms=bucket_ms
         )
         return jsonify(data)
     except Exception as e:
         return jsonify({"error": "summary_error", "message": str(e)}), 500
+
+
+# -------------------------
+# /live/summary/persisted (lee de summaries.db) — ÚNICA FUENTE para front
+# -------------------------
+@bp.get("/live/summary/persisted")
+def live_summary_persisted():
+    """
+    Devuelve SIEMPRE formato **por usuario**:
+      { "bucket_ms": 5000, "devices": [...], "meta": {...}, "run": {...}, "global": {...}, "timeline": [...] }
+    El front consume principalmente: bucket_ms + devices[] (dev, user.apodo, metrics, timeline).
+    """
+    try:
+        data = load_last_persisted_summary_devices()  # ya viene como devices[]
+        resp = jsonify(data)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    except Exception as e:
+        return jsonify({"error": "summary_persisted_error", "message": str(e)}), 500
