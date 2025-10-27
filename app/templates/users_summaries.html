@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Resúmenes por usuario</title>
+<style>
+/* ========= Brand CSS ========= */
+@font-face{ font-family:"Montserrat"; src:local("Montserrat Thin"), url("/static/fonts/Montserrat-Thin.ttf") format("truetype"); font-display:swap; font-weight:100 900; }
+@font-face{ font-family:"Stretch Pro"; src:local("Stretch Pro"), url("/static/fonts/StretchPro.otf") format("opentype"); font-display:swap; font-weight:400 800; }
+
+:root{
+  --bg:#0a0a0a; --card:#121212; --text:#f5f5f6; --muted:#a5adbb;
+  --border:#262626; --accent:#8b5cf6; --accent-2:#a78bfa;
+  --danger:#ef4444; --ok:#22c55e; --shadow-lg:0 8px 30px rgba(0,0,0,.35);
+  --radius:14px; --ff-ui:"Montserrat",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  --ff-head:"Stretch Pro",var(--ff-ui);
+  --fs-h1:clamp(1.25rem,2.6vw,2rem); --fs-ui:16px; --fs-small:13px;
+  --page-pad:clamp(12px,2.5vw,24px); --wrap-w:1100px;
+  --z1:#3a3a3a; --z2:#1e3a8a; --z3:#166534; --z4:#7c3aed; --z5:#b91c1c;
+}
+
+*{ box-sizing:border-box; }
+html,body{ height:100%; margin:0; padding:0; }
+html{ background:var(--bg); color:var(--text); font-family:var(--ff-ui); }
+body{ margin:0; padding:var(--page-pad); font-size:var(--fs-ui); line-height:1.45; }
+
+.wrap{ max-width:var(--wrap-w); margin:0 auto; }
+h1{ font-family:var(--ff-head); font-weight:800; letter-spacing:.3px;
+    color:var(--text); font-size:var(--fs-h1); margin-bottom:12px; }
+
+.panel{ background:var(--card); border:1px solid var(--border);
+        border-radius:var(--radius); box-shadow:var(--shadow-lg); }
+.card-pad{ padding:16px; }
+
+.toolbar{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:10px 0 16px; }
+
+select{ width:100%; padding:12px; border:1px solid var(--border);
+        border-radius:12px; background:#0f0f0f; color:var(--text);
+        font-size:1rem; font-family:var(--ff-ui); }
+
+/* Tabla */
+.table-wrap{ overflow-x:auto; border-radius:var(--radius); }
+table{ width:100%; border-collapse:collapse; min-width:620px; font-family:var(--ff-ui); }
+th,td{ padding:12px; text-align:center; border-bottom:1px solid var(--border); font-size:14px; }
+thead th{ background:linear-gradient(180deg,#171717,#121212); font-family:var(--ff-head); position:sticky; top:0; z-index:1; }
+.muted{ color:var(--muted); }
+tr:hover{ background:rgba(139,92,246,0.06); cursor:pointer; }
+
+/* Mini-card layout */
+.card-hr{ border-radius:16px; padding:16px; min-height:180px;
+          box-shadow:0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
+          color:#fff; }
+.z1{background:var(--z1)} .z2{background:linear-gradient(135deg,#1e3a8a,#1f4bb5)}
+.z3{background:linear-gradient(135deg,#166534,#1c7a41)} .z4{background:linear-gradient(135deg,#7c3aed,#9333ea)}
+.z5{background:linear-gradient(135deg,#b91c1c,#ef4444)}
+.zonebar{ height:10px; width:100%; border-radius:10px; background:#000; opacity:.6; margin-bottom:12px; }
+
+.mini-grid{ display:grid; grid-template-columns: 220px 1fr; gap:16px; align-items:stretch; }
+.metrics{ display:grid; gap:10px; align-content:start; }
+.metric{ display:flex; align-items:center; gap:10px; font-weight:800; }
+.metric .big{ font-size:28px; font-family:var(--ff-head); line-height:1; }
+.metric .lbl{ font-size:12px; color:var(--muted); letter-spacing:.02em; }
+.summarybar{ width:100%; height:160px; border-radius:10px;
+              box-shadow: inset 0 2px 8px rgba(0,0,0,.35), 0 10px 24px rgba(0,0,0,.25);
+              background:rgba(0,0,0,.15); }
+
+/* Totales */
+.totals{ display:grid; grid-template-columns: repeat(2, 1fr); gap:12px; }
+.total-card{ padding:14px; border-radius:12px; border:1px solid var(--border);
+             background:#141414; display:grid; gap:8px; }
+.total-title{ font-family:var(--ff-head); letter-spacing:.02em; font-size:15px; }
+.total-grid{ display:grid; grid-template-columns: repeat(4, auto); gap:12px; align-items:end; }
+.total-item{ display:grid; gap:4px; }
+.total-val{ font-size:20px; font-weight:800; }
+.total-sub{ font-size:12px; color:var(--muted); }
+
+/* Detalles */
+.row-detail{ display:none; } .row-detail.open{ display:table-row; }
+.row-detail > td{ padding:0; background:#0d0d0d; } .detail-pad{ padding:16px; }
+
+/* ===== Responsive ===== */
+@media (max-width: 900px){
+  .wrap{ padding:0; }
+  h1{ font-size:clamp(1.1rem,4vw,1.6rem); }
+  .toolbar{ flex-direction:column; align-items:stretch; }
+  .mini-grid{ grid-template-columns:1fr; }
+  .summarybar{ height:140px; }
+  .metrics{ grid-template-columns: repeat(3, 1fr); text-align:center; }
+  .metric{ flex-direction:column; justify-content:center; }
+  .metric .big{ font-size:24px; }
+  .totals{ grid-template-columns:1fr; }
+  table{ min-width:100%; font-size:13px; }
+  th,td{ padding:8px; }
+}
+
+@media (max-width: 600px){
+  body{ padding:10px; }
+  .card-pad{ padding:12px; }
+  .mini-grid{ gap:12px; }
+  .summarybar{ height:120px; }
+  .metric .big{ font-size:22px; }
+  .total-grid{ grid-template-columns: repeat(2, 1fr); gap:10px; }
+}
+</style>
+</head>
+
+<body>
+  <div class="wrap">
+    <h1>Resúmenes por usuario</h1>
+
+    <div class="toolbar panel card-pad">
+      <select id="userSelect" aria-label="Usuarios con resúmenes" style="width:100%">
+        <option value="">Cargando usuarios…</option>
+      </select>
+    </div>
+
+    <div id="totals" class="panel card-pad" style="display:none">
+      <div class="totals">
+        <div class="total-card">
+          <div class="total-title">Siempre</div>
+          <div class="total-grid">
+            <div class="total-item"><div class="total-val" id="allPct">--%</div><div class="total-sub">% HRmax</div></div>
+            <div class="total-item"><div class="total-val" id="allKcal">--</div><div class="total-sub">Kcal</div></div>
+            <div class="total-item"><div class="total-val" id="allPts">--</div><div class="total-sub">Puntos</div></div>
+            <div class="total-item"><div class="total-val" id="allSes">--</div><div class="total-sub">Sesiones</div></div>
+          </div>
+        </div>
+        <div class="total-card">
+          <div class="total-title">Mes en curso</div>
+          <div class="total-grid">
+            <div class="total-item"><div class="total-val" id="mPct">--%</div><div class="total-sub">% HRmax</div></div>
+            <div class="total-item"><div class="total-val" id="mKcal">--</div><div class="total-sub">Kcal</div></div>
+            <div class="total-item"><div class="total-val" id="mPts">--</div><div class="total-sub">Puntos</div></div>
+            <div class="total-item"><div class="total-val" id="mSes">--</div><div class="total-sub">Sesiones</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>%HRmax</th>
+              <th>Kcal</th>
+              <th>Puntos</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="4" class="muted" style="text-align:center; padding:24px">Selecciona un usuario para ver sus resúmenes…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+<script>
+const API = {
+  usersWithSummaries: () => '/api/users/with_summaries',
+  userSummaries: (uid) => `/api/user_summaries?user_id=${encodeURIComponent(uid)}`,
+  userSummaryDetail: (uid, runId) => `/api/user_summary_detail?user_id=${encodeURIComponent(uid)}&run_id=${encodeURIComponent(runId)}`,
+  userTotals: (uid) => `/api/user_totals?user_id=${encodeURIComponent(uid)}`
+};
+
+const tbody = document.getElementById('tbody');
+const userSelect = document.getElementById('userSelect');
+const totalsBox = document.getElementById('totals');
+
+const fmtDate = (ms) => {
+  if (!ms) return '--';
+  const d = new Date(Number(ms));
+  const dd = String(d.getDate()).padStart(2,'0');
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mi = String(d.getMinutes()).padStart(2,'0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+};
+const zoneClass = z => ({Z1:'z1',Z2:'z2',Z3:'z3',Z4:'z4',Z5:'z5'})[z]||'z1';
+const zoneColor = z => ({Z1:getComputedStyle(document.documentElement).getPropertyValue('--z1').trim()||'#3a3a3a',Z2:getComputedStyle(document.documentElement).getPropertyValue('--z2').trim()||'#1e3a8a',Z3:getComputedStyle(document.documentElement).getPropertyValue('--z3').trim()||'#166534',Z4:getComputedStyle(document.documentElement).getPropertyValue('--z4').trim()||'#7c3aed',Z5:getComputedStyle(document.documentElement).getPropertyValue('--z5').trim()||'#b91c1c'})[z]||'#3a3a3a';
+
+function renderReliefBar(canvas,timeline,bucket_ms){
+  if(!Array.isArray(timeline)||timeline.length===0)return;
+  const dpr=window.devicePixelRatio||1;
+  const widthCSS=canvas.clientWidth||canvas.parentElement.clientWidth||420;
+  const heightCSS=canvas.clientHeight||Math.max(160,(canvas.parentElement?.clientHeight||200));
+  canvas.width=Math.floor(widthCSS*dpr);
+  canvas.height=Math.floor(heightCSS*dpr);
+  const ctx=canvas.getContext('2d'); if(!ctx)return; ctx.clearRect(0,0,canvas.width,canvas.height);
+  const firstT=timeline[0].t; const lastT=(timeline[timeline.length-1].t)+(bucket_ms||1);
+  const span=Math.max(bucket_ms||1,lastT-firstT);
+  const toX=t=>Math.max(0,Math.min(canvas.width,Math.round(((t-firstT)/span)*canvas.width)));
+  for(const b of timeline){
+    const t0=b.t,t1=t0+bucket_ms;
+    const x0=toX(t0),x1=toX(t1);
+    if(x1<=0||x0>=canvas.width)continue;
+    const w=Math.max(1,x1-x0);
+    const frac=Math.max(0,Math.min(1,Number(b.frac)||0));
+    const h=Math.round(frac*canvas.height);
+    const y=canvas.height-h;
+    ctx.fillStyle=zoneColor(b.zone_mode||'Z1');
+    ctx.fillRect(x0,y,w,h);
+  }
+}
+
+function buildMiniCard(detail){
+  const {metrics,bucket_ms,timeline}=detail||{};
+  const card=document.createElement('div');
+  card.className=`card-hr ${zoneClass((timeline?.[0]?.zone_mode)||'Z1')}`;
+  const bar=document.createElement('div'); bar.className='zonebar'; card.appendChild(bar);
+
+  const wrap=document.createElement('div'); wrap.className='mini-grid';
+  const metricsCol=document.createElement('div');
+  metricsCol.className='metrics';
+  metricsCol.innerHTML=`
+    <div class="metric"><div class="big">${Math.round(Number(metrics?.pct_avg||0))}%</div><div class="lbl">% HRmax</div></div>
+    <div class="metric"><div class="big">${Number(metrics?.kcal||0).toFixed(0)}</div><div class="lbl">Kcal</div></div>
+    <div class="metric"><div class="big">${Number(metrics?.points||0).toFixed(0)}</div><div class="lbl">Puntos</div></div>`;
+  const right=document.createElement('div');
+  const relief=document.createElement('canvas'); relief.className='summarybar';
+  right.appendChild(relief);
+  wrap.append(metricsCol,right);
+  card.appendChild(wrap);
+  renderReliefBar(relief,Array.isArray(timeline)?timeline:[],bucket_ms||5000);
+  return card;
+}
+
+function rowDetail(){
+  const tr=document.createElement('tr'); tr.className='row-detail';
+  const td=document.createElement('td'); td.colSpan=4;
+  const pad=document.createElement('div'); pad.className='detail-pad';
+  td.appendChild(pad); tr.appendChild(td); return tr;
+}
+
+async function fetchUsersWithSummaries(){const r=await fetch(API.usersWithSummaries(),{cache:'no-store'});if(!r.ok)throw new Error('Error usuarios');return r.json();}
+async function fetchUserSummaries(uid){const r=await fetch(API.userSummaries(uid),{cache:'no-store'});if(!r.ok)throw new Error('Error resúmenes');return r.json();}
+async function fetchSummaryDetail(uid,runId){const r=await fetch(API.userSummaryDetail(uid,runId),{cache:'no-store'});if(!r.ok)throw new Error('Error detalle');return r.json();}
+async function fetchUserTotals(uid){const r=await fetch(API.userTotals(uid),{cache:'no-store'});if(!r.ok)throw new Error('Error totales');return r.json();}
+
+function clearTable(msg){
+  tbody.innerHTML=`<tr><td colspan="4" class="muted" style="text-align:center; padding:24px">${msg||'Sin resultados'}</td></tr>`;
+  totalsBox.style.display='none';
+}
+
+function renderTotals(t){
+  if(!t){totalsBox.style.display='none';return;}
+  const fmt=n=>(Number(n||0)).toFixed(0);
+  document.getElementById('allPct').textContent=`${Number(t.all_time?.pct_avg||0).toFixed(1)}%`;
+  document.getElementById('allKcal').textContent=fmt(t.all_time?.kcal_total);
+  document.getElementById('allPts').textContent=fmt(t.all_time?.points_total);
+  document.getElementById('allSes').textContent=fmt(t.all_time?.sessions);
+  document.getElementById('mPct').textContent=`${Number(t.month?.pct_avg||0).toFixed(1)}%`;
+  document.getElementById('mKcal').textContent=fmt(t.month?.kcal_total);
+  document.getElementById('mPts').textContent=fmt(t.month?.points_total);
+  document.getElementById('mSes').textContent=fmt(t.month?.sessions);
+  totalsBox.style.display='block';
+}
+
+async function renderResultsForUser(user){
+  const list=await fetchUserSummaries(user.id);
+  if(!Array.isArray(list)||list.length===0){clearTable('Sin resúmenes para este usuario');return;}
+  tbody.innerHTML='';
+  const frag=document.createDocumentFragment();
+  list.sort((a,b)=>(b.ended_at_ms||0)-(a.ended_at_ms||0));
+  for(const s of list){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td>${fmtDate(s.ended_at_ms)}</td>
+      <td>${Number(s.pct_avg||0).toFixed(0)}%</td>
+      <td>${Number(s.kcal||0).toFixed(0)}</td>
+      <td>${Number(s.points||0).toFixed(0)}</td>`;
+    const trDetail=rowDetail();
+    tr.addEventListener('click',async()=>{
+      const opened=trDetail.classList.contains('open');
+      document.querySelectorAll('.row-detail.open').forEach(el=>el.classList.remove('open'));
+      if(opened)return;
+      trDetail.classList.add('open');
+      const pad=trDetail.querySelector('.detail-pad'); pad.innerHTML='<div class="muted">Cargando…</div>';
+      try{const detail=await fetchSummaryDetail(user.id,s.run_id); pad.innerHTML=''; pad.appendChild(buildMiniCard(detail));}
+      catch{pad.innerHTML='<div class="muted">No se pudo cargar el detalle.</div>';}
+    });
+    frag.append(tr,trDetail);
+  }
+  tbody.appendChild(frag);
+}
+
+async function populateUsers(){
+  try{
+    userSelect.innerHTML='<option value="">Cargando…</option>';
+    const users=await fetchUsersWithSummaries();
+    if(!Array.isArray(users)||users.length===0){userSelect.innerHTML='<option value="">(Sin usuarios)</option>';return;}
+    userSelect.innerHTML='<option value="">— Selecciona usuario —</option>'+users.map(u=>`<option value="${u.id}">${u.apodo||('Usuario '+u.id)}</option>`).join('');
+  }catch{userSelect.innerHTML='<option value="">Error cargando usuarios</option>';}
+}
+
+async function onUserChange(){
+  const uid=userSelect.value;
+  if(!uid){clearTable('Selecciona un usuario para ver sus resúmenes…');return;}
+  try{const totals=await fetchUserTotals(uid);renderTotals(totals);}catch{totalsBox.style.display='none';}
+  await renderResultsForUser({id:uid});
+}
+
+userSelect.addEventListener('change',onUserChange);
+populateUsers();
+</script>
+</body>
+</html>
