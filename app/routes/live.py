@@ -3,7 +3,9 @@ from flask import Blueprint, jsonify, request, current_app, make_response, Respo
 import time, logging, json, hashlib
 from datetime import datetime, timezone
 from typing import Any, Optional
+
 from app.db.repos import UsersRepo
+from app.db.connection import get_conn
 from app.services.hrm.sim import SimHRProvider
 from app.services.session_store import (
     live_full_summary,
@@ -13,9 +15,10 @@ from app.services.session_store import (
     _STORE,
 )
 from app.db.session_dump import dump_session_to_db
-from app.db.summary_query import load_last_run_summary  # cálculo on-the-fly para el front
-# 🔸 para el resumen persistido per-user:
-from app.db.summary_query import load_last_persisted_summary_devices
+from app.db.summary_query import (
+    load_last_run_summary,                     # cálculo on-the-fly (compat)
+    load_persisted_summary_devices_by_run_id,  # 📌 lectura determinista por run_id
+)
 
 # 🔸 Importa SESSION para leer phase/status (opcional)
 try:
@@ -52,28 +55,6 @@ def _session_state():
         return SESSION.status()
     except Exception:
         return None
-
-def _class_active_and_anchor() -> tuple[bool, Optional[int]]:
-    active = False
-    anchor_ms = None
-    st = _session_state()
-    if st:
-        active = bool(st.get("active"))
-        # intenta derivar el inicio de clase (t0)
-        for k in ("class_start_ms", "t0_ms"):
-            if isinstance(st.get(k), int):
-                anchor_ms = st[k]
-                break
-        if not anchor_ms:
-            for k in ("class_t0", "phase_t0"):
-                v = st.get(k)
-                if isinstance(v, str):
-                    try:
-                        anchor_ms = int(datetime.fromisoformat(v.replace("Z","+00:00"))
-                                        .astimezone(timezone.utc).timestamp()*1000)
-                    except Exception:
-                        pass
-    return active, anchor_ms
 
 def _to_ms(ts):
     if not isinstance(ts, (int, float)):
@@ -161,10 +142,10 @@ def _update_sim_phase(prov: Any) -> None:
 
 
 # -------------------------
-# Helpers de persistencia (evitan código duplicado)
+# Helpers de persistencia
 # -------------------------
 def _extract_run_info_from_status(status: dict | None) -> tuple[Optional[str], Optional[int]]:
-    """Saca run_id y started_at_ms del status (con todos tus fallbacks)."""
+    """Saca run_id y started_at_ms del status (con fallbacks)."""
     if not isinstance(status, dict):
         return None, None
     run_id = status.get("session_id") or status.get("id")
@@ -189,7 +170,7 @@ def _extract_run_info_from_status(status: dict | None) -> tuple[Optional[str], O
 def _persist_session_and_summary(data: dict, status: dict | None) -> None:
     """
     1) Vuelca crudo a SESSION_RUNS_DB_PATH (session_dump)
-    2) Calcula y guarda summary (global + per-user) en SUMMARIES_DB_PATH (best-effort)
+    2) Calcula y guarda summary (global + per-user) en summaries.db (best-effort)
     """
     from app.db.repos import UsersRepo
     from app.db.summary_query import compute_and_store_last_run_summary
@@ -274,13 +255,13 @@ def _build_live_snapshot(users_repo, prov, limit, recent_ms):
         ms = live_full_summary(
             hr=bpm,
             user=u,
-            dev_id=display_dev,   # ← antes era uid
+            dev_id=display_dev,
             ts_iso=ts_iso,
             integrate=True,
         )
 
         out.append({
-            "dev": display_dev,    # ← así el front y metrics comparten ID
+            "dev": display_dev,
             "hr": bpm,
             "ts": now_ms,
             "user": {"apodo": apodo},
@@ -350,7 +331,7 @@ def live():
         clear_sessions()
 
     if prev_active is True and not session_active:
-        # fin de sesión -> exporta a DB (crudo) y guarda summary; luego limpia el store
+        # fin de sesión -> exporta a DB (crudo) + guarda summary; luego limpia el store
         def _persist_fn(data):
             _persist_session_and_summary(data, st or {})
         export_and_clear_sessions(_persist_fn)
@@ -402,10 +383,12 @@ def live_stream():
         if prev_active is False and session_active:
             clear_sessions()
         if prev_active is True and not session_active:
+            # fin de sesión -> persiste
             def _persist_fn(data):
                 status = _session_state() or {}
                 _persist_session_and_summary(data, status)
             export_and_clear_sessions(_persist_fn)
+
         current_app._LAST_SESSION_ACTIVE = session_active
         return out
 
@@ -448,7 +431,7 @@ def live_config():
     return jsonify({
         "fade_ms": int(current_app.config.get("LIVE_FADE_MS", 60000)),
         "recent_ms": int(current_app.config.get("LIVE_RECENT_MS", 5000)),
-        "summary_ms": int(current_app.config.get("SUMMARY_SHOW_MS", 15000)),  # ⬅️ NUEVO
+        "summary_ms": int(current_app.config.get("SUMMARY_SHOW_MS", 15000)),
     })
 
 
@@ -522,14 +505,57 @@ def live_summary():
 @bp.get("/live/summary/persisted")
 def live_summary_persisted():
     """
-    Devuelve SIEMPRE formato **por usuario**:
-      { "bucket_ms": 5000, "devices": [...], "meta": {...}, "run": {...}, "global": {...}, "timeline": [...] }
-    El front consume principalmente: bucket_ms + devices[] (dev, user.apodo, metrics, timeline).
+    Devuelve SIEMPRE el resumen de la última sesión REAL, identificado por run_id de session_runs.
+    Si aún no existe en summaries.db, responde 204 (pendiente) con Retry-After.
+    ETag basado en run_id + ended_at_ms (estable entre polls).
     """
+    # 1) localizar último run real (session_runs)
     try:
-        data = load_last_persisted_summary_devices()  # ya viene como devices[]
-        resp = jsonify(data)
-        resp.headers["Cache-Control"] = "no-store"
-        return resp
+        with get_conn(current_app.config["SESSION_RUNS_DB_PATH"]) as con:
+            row = con.execute(
+                "SELECT id, ended_at_ms FROM session_runs ORDER BY ended_at_ms DESC LIMIT 1"
+            ).fetchone()
     except Exception as e:
         return jsonify({"error": "summary_persisted_error", "message": str(e)}), 500
+
+    if not row:
+        # no hay sesiones registradas aún
+        resp = Response(status=204)
+        resp.headers["Retry-After"] = "2"
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    run_id = row["id"] if isinstance(row, dict) else row[0]
+    ended_at_ms = row["ended_at_ms"] if isinstance(row, dict) else row[1]
+
+    # 2) cargar ese run_id en summaries.db
+    try:
+        data = load_persisted_summary_devices_by_run_id(run_id)
+    except Exception as e:
+        return jsonify({"error": "summary_persisted_error", "message": str(e)}), 500
+
+    if not data or not (data.get("devices") or []):
+        # aún no persistido o vacío -> invita a reintentar
+        resp = Response(status=204)
+        resp.headers["Retry-After"] = "2"
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    # 3) ETag/304
+    etag_seed = f"{run_id}:{int(ended_at_ms or 0)}"
+    etag = hashlib.md5(etag_seed.encode("utf-8")).hexdigest()
+
+    inm = request.headers.get("If-None-Match")
+    if inm and inm.strip('"') == etag:
+        resp = Response(status=304)
+        resp.headers["ETag"] = etag
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+
+    # 4) 200 con JSON + ETag
+    payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
+    resp = make_response(payload, 200)
+    resp.mimetype = "application/json"
+    resp.headers["ETag"] = etag
+    resp.headers["Cache-Control"] = "no-store"
+    return resp

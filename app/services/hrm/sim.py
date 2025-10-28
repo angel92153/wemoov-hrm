@@ -14,7 +14,7 @@ class SimHRProvider:
       - idle (sin sesión)
       - countdown
       - warmup
-      - transition
+      - transition (demo / transiciones)
       - cooldown
       - block (entrenamiento)
 
@@ -26,33 +26,36 @@ class SimHRProvider:
     """
 
     # ========= Clasificación por clave/color de fase =========
-    KEYS_WARMUP = {"warmup", "warm_up", "calentamiento"}
-    KEYS_TRANSITION = {"transition", "transición", "demo", "demos", "transitions"}
-    KEYS_COOLDOWN = {"cooldown", "cool_down", "vuelta a la calma", "cool down"}
+    KEYS_WARMUP = {"warmup", "warm_up", "warm up", "calentamiento"}
+    KEYS_TRANSITION = {"transition", "transición", "transicion", "demo", "demos", "transitions", "t1", "t2", "t3"}
+    KEYS_COOLDOWN = {"cooldown", "cool_down", "cool down", "vuelta a la calma"}
     KEYS_BLOCK = {
-        "block", "bloque", "train", "sweat", "burn",
-        "z2", "z3", "z4", "z5"
+        "block", "bloque", "train", "sweat", "burn", "work",
+        "z2", "z3", "z4", "z5", "b1", "b2", "b3", "b4"
     }
 
+    # Colores (nuevo esquema)
     COLOR_GREEN  = "#16a34a"  # warm up
-    COLOR_PURPLE = "#6b21a8"  # transition/demo
-    COLOR_YELLOW = "#eab308"  # block
-    COLOR_BLUE   = "#1d4ed8"  # cooldown
+    COLOR_PURPLE = "#6b21a8"  # bloques
+    COLOR_BLUE   = "#1d4ed8"  # demo / transiciones / cooldown
+
+    # Sugerencias por color (si no hay match por clave). Nota: BLUE sirve para
+    # transition y cooldown; si solo se conoce el color, se prioriza "transition".
     COLOR_HINTS = {
         "warmup":     (COLOR_GREEN,),
-        "transition": (COLOR_PURPLE,),
-        "block":      (COLOR_YELLOW,),
-        "cooldown":   (COLOR_BLUE,),
+        "block":      (COLOR_PURPLE,),
+        "transition": (COLOR_BLUE,),
+        # "cooldown": (COLOR_BLUE,),  # el key lo distingue; por color solo, cae en transition
     }
 
     # ========= Objetivos ABSOLUTOS por fase (BPM) =========
     # Basados en HRmáx ≈ 185. Ajusta si tu público típico es distinto.
     TARGET_BPM = {
-        "idle":       80,  # ~58% de 185, reposo “activo” en sala
-        "countdown":  80,  # ~60%
+        "idle":       80,   # ~43% de 185, reposo “activo” en sala
+        "countdown":  80,   # ~43%
         "warmup":     130,  # ~70%
-        "transition": 115,  # ~62% (bajando hacia ~60%)
-        "cooldown":   100,  # ~61% (bajando hacia ~60%)
+        "transition": 115,  # ~62%
+        "cooldown":   100,  # ~54%
         "block":      167,  # ~90%
     }
 
@@ -187,6 +190,7 @@ class SimHRProvider:
         k = (phase_key or "").strip().casefold()
         c = (phase_color or "").strip().casefold()
 
+        # 1) Por clave explícita
         if k in self.KEYS_BLOCK:
             return "block"
         if k in self.KEYS_WARMUP:
@@ -196,21 +200,24 @@ class SimHRProvider:
         if k in self.KEYS_TRANSITION:
             return "transition"
 
+        # 2) Por color sugerido (si no hay clave)
         if c:
             for cat, hints in self.COLOR_HINTS.items():
                 for h in hints:
                     if c.startswith(h.casefold()):
                         return cat
 
-        if any(s in k for s in ("block", "bloque", "train", "sweat", "burn", "z3", "z4", "z5")):
+        # 3) Heurísticas por substring
+        if any(s in k for s in ("block", "bloque", "train", "sweat", "burn", "z3", "z4", "z5", "b1", "b2", "b3", "b4")):
             return "block"
         if any(s in k for s in ("warm", "calent", "prep")):
             return "warmup"
         if "cool" in k or "vuelta" in k:
             return "cooldown"
-        if "demo" in k or "trans" in k:
+        if "demo" in k or "trans" in k or k.startswith("t"):
             return "transition"
 
+        # 4) Fallback: transition
         return "transition"
 
     def _target_for_category(self, key: int) -> float:

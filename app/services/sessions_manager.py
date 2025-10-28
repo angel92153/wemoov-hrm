@@ -25,9 +25,30 @@ def _conn():
 
 # ======================= COLORES =======================
 COLOR_GREEN  = "#16a34a"  # warm up
-COLOR_PURPLE = "#6b21a8"  # demo / transiciones
-COLOR_YELLOW = "#eab308"  # bloques
-COLOR_BLUE   = "#1d4ed8"  # cooldown
+COLOR_PURPLE = "#6b21a8"  # bloques
+COLOR_BLUE   = "#1d4ed8"  # demo / transiciones / cooldown
+
+# ====== Inferencia de color por clave semántica de fase ======
+
+def _infer_color(phase_key: str, fallback: Optional[str] = None) -> str:
+    """Color por defecto según la clave semántica de la fase.
+    - Demo y transiciones → AZUL
+    - Bloques de trabajo (train/sweat/burn/etc.) → MORADO
+    - Warm up → VERDE
+    - Cooldown → AZUL
+    - Fallback: MORADO (bloques)
+    """
+    k = str(phase_key or "").strip().lower()
+
+    if k in {"demo", "demostracion", "demostración", "transition", "transicion", "transición"}:
+        return COLOR_BLUE
+    if k in {"block", "bloque", "train", "sweat", "burn", "work", "intervalo", "interval", "set"}:
+        return COLOR_PURPLE
+    if k in {"warm up", "warmup", "warm-up", "calentamiento"}:
+        return COLOR_GREEN
+    if k in {"cooldown", "cool down", "vuelta a la calma"}:
+        return COLOR_BLUE
+    return fallback or COLOR_PURPLE
 
 # ======================= CATALOGO (DB) =======================
 
@@ -66,7 +87,13 @@ def upsert_class(class_id: str, label: str, phases: List[Dict[str, Any]]):
         for i, ph in enumerate(phases):
             cur.execute(
                 "INSERT INTO class_phases(class_id,idx,phase_key,dur_s,color) VALUES(?,?,?,?,?)",
-                (class_id, i, str(ph["key"]), int(ph["dur_s"]), ph.get("color") or COLOR_YELLOW),
+                (
+                    class_id,
+                    i,
+                    str(ph["key"]),
+                    int(ph["dur_s"]),
+                    ph.get("color") or _infer_color(ph.get("key")),
+                ),
             )
     try:
         if "SESSION" in globals() and isinstance(SESSION, SessionManager):  # type: ignore[name-defined]
@@ -94,7 +121,12 @@ def get_phases(class_id: Optional[str]) -> List[Dict[str, Any]]:
             (class_id,)
         ).fetchall()
         return [
-            {"idx": r["idx"], "key": r["phase_key"], "dur_s": r["dur_s"], "color": r["color"]}
+            {
+                "idx": r["idx"],
+                "key": r["phase_key"],
+                "dur_s": r["dur_s"],
+                "color": r["color"] or _infer_color(r["phase_key"]),
+            }
             for r in rows
         ]
 
@@ -525,11 +557,11 @@ class SessionManager:
             return
         with _conn() as con:
             if time_str is not None and dow is not None:
-                con.execute("UPDATE weekly_schedule SET time_str=?, dow=? WHERE sched_id=?", (time_str, dow, sched_id))
+                con.execute("UPDATE weekly_schedule SET time_str=?, dow=? WHERE sched_id= ?", (time_str, dow, sched_id))
             elif time_str is not None:
-                con.execute("UPDATE weekly_schedule SET time_str=? WHERE sched_id=?", (time_str, sched_id))
+                con.execute("UPDATE weekly_schedule SET time_str=? WHERE sched_id= ?", (time_str, sched_id))
             else:
-                con.execute("UPDATE weekly_schedule SET dow=? WHERE sched_id=?", (dow, sched_id))
+                con.execute("UPDATE weekly_schedule SET dow=? WHERE sched_id= ?", (dow, sched_id))
             self._invalidate_weekly_cache()
 
     def delete_schedule(self, sched_id: int):

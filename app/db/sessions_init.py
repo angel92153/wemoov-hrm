@@ -2,10 +2,9 @@
 from __future__ import annotations
 from .connection import get_conn
 
-COLOR_GREEN  = "#16a34a"
-COLOR_PURPLE = "#6b21a8"
-COLOR_YELLOW = "#eab308"
-COLOR_BLUE   = "#1d4ed8"
+COLOR_GREEN  = "#16a34a"  # warm up
+COLOR_PURPLE = "#6b21a8"  # bloques
+COLOR_BLUE   = "#1d4ed8"  # demo / transiciones / cooldown
 
 DDL_CREATE = [
     """
@@ -74,16 +73,16 @@ def init_sessions_db(db_path: str | None = None) -> None:
         if (cur.fetchone()["c"] or 0) == 0:
             cur.execute("INSERT INTO classes(id,label) VALUES(?,?)", ("moov", "Moov Class"))
             phases = [
-                ("moov", 0, "WARM UP",  3*60, COLOR_GREEN),
-                ("moov", 1, "DEMO",     3*60, COLOR_PURPLE),
-                ("moov", 2, "B1",       9*60, COLOR_YELLOW),
-                ("moov", 3, "T1",       2*60, COLOR_PURPLE),
-                ("moov", 4, "B2",       9*60, COLOR_YELLOW),
-                ("moov", 5, "T2",       3*60, COLOR_PURPLE),
-                ("moov", 6, "B3",       9*60, COLOR_YELLOW),
-                ("moov", 7, "T3",       2*60, COLOR_PURPLE),
-                ("moov", 8, "B4",       9*60, COLOR_YELLOW),
-                ("moov", 9, "COOLDOWN", 3*60, COLOR_BLUE),
+                ("moov", 0, "WARM UP",  3*60, COLOR_GREEN),   # verde
+                ("moov", 1, "DEMO",     3*60, COLOR_BLUE),    # azul (demo)
+                ("moov", 2, "B1",       9*60, COLOR_PURPLE),  # morado (bloque)
+                ("moov", 3, "T1",       2*60, COLOR_BLUE),    # azul (transición)
+                ("moov", 4, "B2",       9*60, COLOR_PURPLE),  # morado (bloque)
+                ("moov", 5, "T2",       3*60, COLOR_BLUE),    # azul (transición)
+                ("moov", 6, "B3",       9*60, COLOR_PURPLE),  # morado (bloque)
+                ("moov", 7, "T3",       2*60, COLOR_BLUE),    # azul (transición)
+                ("moov", 8, "B4",       9*60, COLOR_PURPLE),  # morado (bloque)
+                ("moov", 9, "COOLDOWN", 3*60, COLOR_BLUE),    # azul (cooldown)
             ]
             cur.executemany(
                 "INSERT INTO class_phases(class_id,idx,phase_key,dur_s,color) VALUES(?,?,?,?,?)",

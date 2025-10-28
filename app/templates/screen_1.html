@@ -40,67 +40,73 @@
       overflow:hidden;
     }
 
+    /* ======= TOPBAR ESTABLE (3 columnas): Izquierda | Logo | Derecha ======= */
     header.topbar{
       position:fixed; inset:0 0 auto 0; height:var(--topbar-h);
-      display:grid; grid-template-columns: 1fr auto 1fr; align-items:center;
-      padding: 0 16px; z-index:20;
+      display:grid;
+      grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
+      align-items:center; column-gap: 12px;
+      padding: 0 12px 0 16px;
+      z-index:20;
       background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
       border-bottom: 1px solid rgba(255,255,255,.08);
     }
-    .topbar .left{ justify-self:start; display:flex; align-items:center; gap: 0.25ch; white-space: nowrap; min-width: 0; padding-left: 30px; /* más a la derecha */ }
-    .topbar .center{ justify-self:center; height:100%; display:flex; align-items:center; }
-    .topbar .right {
-      justify-self: end; display: flex; align-items: center;
-      --clock-ch: 8; --clock-right-gap: 130px;
-      width: calc(var(--clock-ch) * 1ch + var(--clock-right-gap));
-      padding-right: var(--clock-right-gap);
-      box-sizing: content-box;
-    }
-    .clock {
-      display: block; width: calc(var(--clock-ch) * 1ch); text-align: left;
-      font-family: "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
-      font-weight: 900; line-height: 1; letter-spacing: .03em; white-space: nowrap;
-      text-shadow: 0 1px 2px rgba(0,0,0,.25); font-variant-numeric: tabular-nums;
-      font-size: calc(var(--topbar-h) * 0.8); color: #ffffff;
+
+    /* Capas: contenido base y overlay */
+    .topbar .left, .topbar .center, .topbar .right { position:relative; z-index:1; }
+
+    /* Capa overlay que cubre todo el topbar sin afectar layout */
+    .topbar .overlay {
+      position:absolute; inset:0;
+      pointer-events:none; /* no interfiere con clicks */
+      z-index:2; /* por encima del contenido base */
     }
 
-    .phase, .timer, .clock {
-      font-family: "StretchPro", ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, "Noto Sans", sans-serif;
-      font-weight: 900; line-height: 1; letter-spacing: .03em; white-space: nowrap;
-      text-shadow: 0 1px 2px rgba(0,0,0,.25); font-variant-numeric: tabular-nums;
+    /* Tipografía unificada */
+    .clock, .phase, .timer{
+      font-family:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
+      font-weight:900; line-height:1; letter-spacing:.02em; white-space:nowrap;
+      text-shadow:0 1px 2px rgba(0,0,0,.25);
+      font-variant-numeric:tabular-nums;
       font-size: calc(var(--topbar-h) * 0.8);
     }
     .phase, .timer { color: var(--phase-color); }
-    .clock { color: #ffffff; }
+    .clock { color:#fff; }
 
-    .timer{ letter-spacing: 0; width: 4.5ch; flex: 0 0 4.5ch; text-align: left; margin: 0; }
-    .invisible{ opacity: 0; }
-    .phase{ overflow: hidden; text-overflow: ellipsis; max-width: 50vw; margin: 0; }
+    /* Izquierda: timer visible y estable */
+    .left{ display:flex; align-items:center; gap:12px; min-width:0; height:100%; }
+    .timer{ width:6ch; text-align:left; }
 
+    /* Centro: logo fijo en el eje */
+    .center{ display:flex; align-items:center; justify-content:center; }
     .logo-img { display:block; height: calc(var(--topbar-h) * 0.5); max-width: 34vw; object-fit: contain; filter: drop-shadow(0 1px 2px rgba(0,0,0,.25)); }
 
+    /* Derecha: reloj */
+    .right{ justify-self:end; }
+
+    /* ===== Label (phase) superpuesto centrado en la MITAD IZQUIERDA del topbar ===== */
+    .phase{
+      position:absolute;
+      /* Centro geométrico de la mitad izquierda => 25% del ancho total */
+      left:25%; top:50%; transform:translate(-50%, -50%);
+      max-width:50vw; /* por seguridad, no crezca más de la mitad */
+      text-align:center; overflow:hidden; text-overflow:ellipsis;
+      pointer-events:none;
+    }
+
+    .invisible{ opacity: 0; }
+
+    /* ====== layout base ====== */
     body{ display:flex;align-items:center;justify-content:center;padding:10px; padding-top:calc(var(--topbar-h) + 10px); }
     .wrap{width:100%;height:100%;max-width:1800px;display:flex;align-items:center;justify-content:center}
     .grid{display:grid;width:100%;height:100%;gap:14px;align-content:center;align-items:stretch;justify-content:center;transition:all .3s ease}
 
-    .card{
-      position:relative;border-radius:16px;padding:16px;
-      box-shadow:0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
-      display:flex;align-items:center;justify-content:center;
-      transition:opacity .6s ease, transform .3s ease, box-shadow .3s ease;
-      container-type:size;
-      color:#fff;
-      --base-nick:56px; --base-pct:56px; --base-metric:30px; --base-icon:30px;
-      --fs-nick:max(var(--base-nick),10cqmin);
-      --fs-pct: var(--fs-nick); /* % escala como el nombre */
-      --fs-metric:max(var(--base-metric),7cqmin);
-      --icon-size:max(var(--base-icon),5cqmin);
-    }
+    .card{ position:relative;border-radius:16px;padding:16px; box-shadow:0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08); display:flex;align-items:center;justify-content:center; transition:opacity .6s ease, transform .3s ease, box-shadow .3s ease; container-type:size; color:#fff; --base-nick:56px; --base-pct:56px; --base-metric:30px; --base-icon:30px; --fs-nick:max(var(--base-nick),10cqmin); --fs-pct: var(--fs-nick); --fs-metric:max(var(--base-metric),7cqmin); --icon-size:max(var(--base-icon),5cqmin); }
     .card:active{transform:scale(.995)}
     .z1{background:var(--z1)}
     .z2{background:linear-gradient(135deg,#1e3a8a,#1f4bb5)}
     .z3{background:linear-gradient(135deg,#166534,#1c7a41)}
-    .z4{background: linear-gradient(135deg, #7c3aed, #9333ea)}
+    .z4{background:linear-gradient(135deg,#7c3aed,#9333ea)}
     .z5{background:linear-gradient(135deg,#b91c1c,#ef4444)}
 
     /* Barra de zona superior */
@@ -130,15 +136,20 @@
 <body>
 
   <header class="topbar">
+    <!-- Capa base: grid estable -->
     <div class="left">
       <div id="phaseTimer" class="timer invisible">00:00</div>
-      <div id="phaseText" class="phase"></div>
     </div>
     <div class="center">
       <img src="/static/logo_wemoov.png" alt="WeMoov" class="logo-img" />
     </div>
     <div class="right">
-      <div id="clock" class="clock">--:--:--</div>
+      <div id="clock" class="clock">--:--</div>
+    </div>
+
+    <!-- Capa overlay: no altera el layout -->
+    <div class="overlay">
+      <div id="phaseText" class="phase"></div>
     </div>
   </header>
 
@@ -153,6 +164,8 @@
     let SUMMARY_MS = 15000;          // se sobreescribe desde /live/config
     let SUMMARY_MODE = false;        // bloquea reconcile() y muestra tarjetas de resumen
     let SUMMARY_TIMER = null;        // timeout para salir del modo resumen
+    let SUMMARY_LOADING = false;     // reentrada protegida
+    let LAST_SUMMARY_ETAG = null;    // versión del último resumen pintado
     const summaryBars = new Map();   // dev -> canvas del relieve
 
     (async () => {
@@ -167,13 +180,19 @@
       } catch {}
     })();
 
-    // ====== Reloj cabecera ======
+    // ====== Reloj cabecera (HH:MM, sin segundos) ======
     const clockEl = document.getElementById('clock');
     function updateClock(){
-      const n=new Date(), hh=String(n.getHours()).padStart(2,'0'), mm=String(n.getMinutes()).padStart(2,'0'), ss=String(n.getSeconds()).padStart(2,'0');
-      clockEl.textContent=`${hh}:${mm}:${ss}`;
+      const n = new Date();
+      const hh = String(n.getHours()).padStart(2,'0');
+      const mm = String(n.getMinutes()).padStart(2,'0');
+      clockEl.textContent = `${hh}:${mm}`;
+      // Programar la próxima actualización justo al inicio del siguiente minuto
+      const msToNextMinute = (60 - n.getSeconds()) * 1000 - n.getMilliseconds();
+      clearTimeout(updateClock._t);
+      updateClock._t = setTimeout(updateClock, Math.max(0, msToNextMinute));
     }
-    setInterval(updateClock,1000); updateClock();
+    updateClock();
 
     // ====== Estado sesión ======
     const phaseEl = document.getElementById('phaseText');
@@ -211,39 +230,30 @@
         else { clearCanvas(cnv); cnv.classList.add('hidden'); }
       }
     }
+
     // ====== Modo Resumen (solo /live/summary/persisted con devices) ======
     function renderReliefBar(canvas, timeline, bucket_ms){
       if (!Array.isArray(timeline) || timeline.length === 0) return;
-
       const dpr = window.devicePixelRatio || 1;
       const widthCSS  = canvas.clientWidth  || canvas.parentElement.clientWidth || 420;
       const heightCSS = canvas.clientHeight || Math.max(120, (canvas.parentElement?.clientHeight || 200) * 0.6);
       canvas.width  = Math.max(1, Math.floor(widthCSS  * dpr));
       canvas.height = Math.max(1, Math.floor(heightCSS * dpr));
-
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.clearRect(0,0,canvas.width,canvas.height);
-
       const firstT = timeline[0].t;
       const lastT  = (timeline[timeline.length - 1].t) + (bucket_ms || 1);
       const span   = Math.max(bucket_ms || 1, lastT - firstT);
-
-      const toX = (t) => {
-        const p = (t - firstT) / span;
-        return Math.max(0, Math.min(canvas.width, Math.round(p * canvas.width)));
-      };
-
+      const toX = (t) => { const p = (t - firstT) / span; return Math.max(0, Math.min(canvas.width, Math.round(p * canvas.width))); };
       for (const b of timeline){
         const t0 = b.t, t1 = t0 + bucket_ms;
         const x0 = toX(t0), x1 = toX(t1);
         if (x1 <= 0 || x0 >= canvas.width) continue;
         const w = Math.max(1, x1 - x0);
-
         const frac = Math.max(0, Math.min(1, Number(b.frac) || 0));
         const h = Math.round(frac * canvas.height);
-        const y = canvas.height - h; // bajas abajo, altas arriba
-
+        const y = canvas.height - h;
         const z = b.zone_mode || 'Z1';
         ctx.fillStyle = zoneColor(z);
         ctx.fillRect(x0, y, w, h);
@@ -253,40 +263,21 @@
     function buildSummaryCard(dev, apodo, metrics, timeline, bucket_ms){
       const d = { dev, user: { apodo }, hr: null, metrics: { hr_max: null, zone: 'Z1', kcal: metrics?.kcal ?? null, points: metrics?.points ?? null } };
       const card = buildCard(d);
-
-      // Oculta barra superior y % central
-      const zc = zoneBars.get(dev);
-      if (zc){ zc.classList.add('hidden'); clearCanvas(zc); }
+      const zc = zoneBars.get(dev); if (zc){ zc.classList.add('hidden'); clearCanvas(zc); }
       const pctEl = card.querySelector('.pct'); if (pctEl){ pctEl.textContent = ''; }
-
-      // Sustituye bpm por %HRmax medio
       const pctAvg = Number(metrics?.pct_avg ?? 0);
       const hrEl = card.querySelector(`#hr-${dev}`); if (hrEl){ hrEl.textContent = `${Math.round(pctAvg)}%`; }
-
-      // Canvas central con relieve (en el mismo sitio que el % de FCmax)
       const relief = document.createElement('canvas');
       relief.className = 'summarybar';
       const pctHost = card.querySelector('.pct');
-      if (pctHost){
-        pctHost.textContent = '';
-        pctHost.classList.add('summary-host');
-        pctHost.appendChild(relief);
-      } else {
-        // fallback: si no existe .pct por alguna razón, lo añadimos al centro
-        relief.style.width = '100%';
-        relief.style.height = '60%';
-        card.appendChild(relief);
-      }
-
+      if (pctHost){ pctHost.textContent = ''; pctHost.classList.add('summary-host'); pctHost.appendChild(relief); }
+      else { relief.style.width = '100%'; relief.style.height = '60%'; card.appendChild(relief); }
       summaryBars.set(dev, relief);
-
       relief._summaryPayload = { timeline: Array.isArray(timeline) ? timeline : [], bucket_ms: bucket_ms || 5000 };
       renderReliefBar(relief, relief._summaryPayload.timeline, relief._summaryPayload.bucket_ms);
-
       return card;
     }
 
-    
     function redrawAllSummaryBars(){
       for (const [dev, cnv] of summaryBars.entries()){
         const data = cnv._summaryPayload;
@@ -294,53 +285,142 @@
       }
     }
 
-    async function startSummaryMode(){
-      if (SUMMARY_MODE) return;
-      SUMMARY_MODE = true;
+    // ====== helpers fetch resumen (robusto, solo /live/summary/persisted) ======
+    async function getPersistedSummary(etag) {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000); // timeout duro 8s
+      try {
+        const headers = {};
+        if (etag) headers['If-None-Match'] = etag;
+        const r = await fetch('/live/summary/persisted', { cache: 'no-store', headers, signal: ctrl.signal });
+        clearTimeout(t);
 
-      // Pedimos el resumen persistido al backend
-      let data = null, norm = null;
-      try{
-        const r = await fetch('/live/summary/persisted', { cache:'no-store' });
-        data = r.ok ? await r.json() : null;
-        // Usamos directamente el formato con devices del backend
-        if (!data || !Array.isArray(data.devices) || data.devices.length === 0) { norm = null; }
-        else {
-          const bucket = (typeof data.bucket_ms === 'number') ? data.bucket_ms : 5000;
-          const devices = [...data.devices].sort((a,b)=>{
-            const da = (typeof a.dev === 'number') ? a.dev : String(a.dev);
-            const db = (typeof b.dev === 'number') ? b.dev : String(b.dev);
-            return (da>db) - (da<db);
-          });
-          norm = { devices, bucket_ms: bucket };
+        if (r.status === 204) {
+          const ra = Number(r.headers.get('Retry-After') || 2);
+          return { kind: 'pending', retryAfter: Number.isFinite(ra) ? ra : 2 };
         }
-      }catch{}
+        if (r.status === 304) {
+          return { kind: 'not_modified' };
+        }
+        if (r.ok) {
+          const data = await r.json();
+          let newETag = (r.headers.get('ETag') || '').replaceAll('"', '').trim() || null;
+          return { kind: 'ok', data, etag: newETag };
+        }
+        return { kind: 'pending', retryAfter: 2 };
+      } catch {
+        clearTimeout(t);
+        return { kind: 'pending', retryAfter: 2 };
+      }
+    }
 
-      // Limpiamos grid y estados
+    // ====== Modo Resumen — SOLO /persisted, con salidas garantizadas ======
+    async function startSummaryMode(){
+      if (SUMMARY_MODE || SUMMARY_LOADING) return;
+      SUMMARY_MODE = true;
+      SUMMARY_LOADING = true;
+
+      // reset visual/estado
       grid.innerHTML = '';
       cards.clear(); lastTs.clear(); lastBeatAt.clear();
-      zoneBars.clear(); zoneBarState.clear();
-      summaryBars.clear();
+      zoneBars.clear(); zoneBarState.clear(); summaryBars.clear();
 
-      if (!norm || !Array.isArray(norm.devices) || norm.devices.length === 0){
-        stopSummaryMode(0);
+      // placeholder
+      const holder = document.createElement('div');
+      holder.className = 'card z1';
+      holder.style.cssText = 'display:flex;align-items:center;justify-content:center;height:240px;opacity:1';
+      holder.textContent = 'Generando resumen…';
+      grid.appendChild(holder);
+      layoutForCount(1);
+
+      const T0 = Date.now();
+      const MAX_WAIT = 12000; // 12s
+      let payload = null;
+      let etag = LAST_SUMMARY_ETAG || null;
+
+      while ((Date.now() - T0) < MAX_WAIT && !SESSION_ACTIVE) {
+        const res = await getPersistedSummary(etag);
+        // console.debug('[summary] poll ->', res.kind, 'etag=', etag, 'hasPayload=', !!payload);
+
+        if (res.kind === 'ok') {
+          payload = res.data;
+          if (res.etag) etag = res.etag;
+          break;
+        }
+
+        if (res.kind === 'not_modified') {
+          // Si no hay copia previa (app recién abierta), fuerza un fetch sin ETag
+          if (!payload) {
+            const res2 = await getPersistedSummary(null);
+            if (res2.kind === 'ok') {
+              payload = res2.data;
+              if (res2.etag) etag = res2.etag;
+            }
+          }
+          break;
+        }
+
+        // pending -> respeta Retry-After
+        const waitSec = Math.max(1, res.retryAfter || 2);
+        await new Promise(r => setTimeout(r, waitSec * 1000));
+      }
+
+      // si volvió a arrancar sesión, aborta limpio
+      if (SESSION_ACTIVE) {
+        SUMMARY_LOADING = false;
+        SUMMARY_MODE = false;
+        grid.innerHTML = '';
         return;
       }
 
-      // ⬇️ Orden por dev ya viene de normalizeSummaryForDevices
-      for (const devRow of norm.devices){
-        const dev = devRow.dev;
-        const apodo = (devRow.user && devRow.user.apodo) || `ID ${dev}`;
-        const m = devRow.metrics || {};
-        const tl = Array.isArray(devRow.timeline) ? devRow.timeline : [];
-        const card = buildSummaryCard(dev, apodo, m, tl, norm.bucket_ms || 5000);
-        grid.appendChild(card);
-        cards.set(dev, { el: card, fadeStart: null });
+      // ====== salidas garantizadas ======
+      if (!payload) {
+        holder.textContent = 'Resumen no disponible aún…';
+        SUMMARY_LOADING = false;
+        setTimeout(() => { if (!SESSION_ACTIVE) startSummaryMode(); }, 3000); // reintento suave
+        return;
+      }
+
+      if (!Array.isArray(payload.devices) || payload.devices.length === 0){
+        holder.textContent = 'Resumen vacío.';
+        SUMMARY_LOADING = false;
+        return;
+      }
+
+      // pintar resumen
+      grid.innerHTML = '';
+      cards.clear(); summaryBars.clear();
+
+      const bucket = (typeof payload.bucket_ms === 'number') ? payload.bucket_ms : 5000;
+      const devices = [...payload.devices].sort((a,b)=>{
+        const da = (typeof a.dev === 'number') ? a.dev : String(a.dev);
+        const db = (typeof b.dev === 'number') ? b.dev : String(b.dev);
+        return (da>db)-(da<db);
+      });
+
+      try {
+        for (const devRow of devices){
+          const dev = devRow.dev;
+          const apodo = (devRow.user && devRow.user.apodo) || `ID ${dev}`;
+          const m = devRow.metrics || {};
+          const tl = Array.isArray(devRow.timeline) ? devRow.timeline : [];
+          const card = buildSummaryCard(dev, apodo, m, tl, bucket);
+          grid.appendChild(card);
+          cards.set(dev, { el: card, fadeStart: null });
+        }
+      } catch (e) {
+        console.error('render summary failed:', e);
+        holder.textContent = 'Error renderizando el resumen';
+        SUMMARY_LOADING = false;
+        return;
       }
 
       layoutForCount(cards.size);
+      if (etag) LAST_SUMMARY_ETAG = etag;
+      SUMMARY_LOADING = false;
       stopSummaryMode(SUMMARY_MS);
     }
+
 
     function stopSummaryMode(delayMs){
       if (SUMMARY_TIMER) clearTimeout(SUMMARY_TIMER);
@@ -363,8 +443,6 @@
 
         if (!s.active && s.show_countdown){
           document.documentElement.style.setProperty('--phase-color', '#ffffff');
-          const pausedSuffix = (s.countdown_paused ? ' · PAUSA' : '');
-          phaseEl.textContent = 'COUNTDOWN' + pausedSuffix;
           timerEl.textContent = fmtMMSS(s.countdown_s || 0);
           timerEl.classList.remove('invisible');
           ensureZoneLineTimer(false);
@@ -407,9 +485,9 @@
     const POLL_MS = 1000, IDLE_POLL_MS = 5000, FETCH_TIMEOUT_MS = 8000, MAX_ERROR_BACKOFF_MS = 6000;
     const grid = document.getElementById('grid');
     const lastTs = new Map(), cards = new Map();
-    const lastBeatAt = new Map(); // ⬅️ FIX: estaba referenciado en limpiados pero no definido
-    const zoneBars = new Map();      // dev -> canvas (barra superior)
-    const zoneBarState = new Map();  // dev -> { lastAnchor, lastLen }
+    const lastBeatAt = new Map();
+    const zoneBars = new Map();
+    const zoneBarState = new Map();
     let nextTimer=null, errorBackoff=POLL_MS, abortCtrl=null, useSSE=false, es=null;
 
     const zoneClass = z => ({ Z1:'z1', Z2:'z2', Z3:'z3', Z4:'z4', Z5:'z5' })[z] || 'z1';
@@ -449,7 +527,6 @@
       const card=document.createElement('div');
       card.className=`card ${zoneClass(zone)}`; card.style.opacity='1';
 
-      // barra superior (zona)
       const zc = document.createElement('canvas');
       zc.className = 'zonebar';
       zc.dataset.dev = d.dev;
@@ -544,7 +621,6 @@
       // guardar ts
       arr.forEach(d=>{ const ts=d.ts||'', prev=lastTs.get(d.dev); if (ts && ts!==prev) lastTs.set(d.dev, ts); });
 
-      // si hay sesión activa, refrescamos zona del recién llegado
       if (SESSION_ACTIVE){ arr.forEach(d => drawZoneBarForDev(d.dev)); }
     }
 
@@ -561,7 +637,6 @@
         const res  = await fetch(POLL_URL, { cache:'no-store', headers:{'Cache-Control':'no-store'}, signal:abortCtrl.signal });
         const list = await res.json();
         clearTimeout(timeout);
-
         reconcile(list);
         errorBackoff = POLL_MS;
         scheduleNext((list && list.length) ? POLL_MS : IDLE_POLL_MS);
@@ -589,6 +664,8 @@
         if (!useSSE && !es) tick();
         if (SUMMARY_MODE){ redrawAllSummaryBars(); }
         else if (SESSION_ACTIVE){ refreshAllZoneBars(); }
+        // refrescar reloj al volver de background
+        updateClock();
       }
     });
     window.addEventListener('resize', () => {
@@ -601,7 +678,6 @@
     async function drawZoneBarForDev(dev){
       const cardEntry = cards.get(dev); if (!cardEntry) return;
       const canvas = zoneBars.get(dev); if (!canvas) return;
-
       try{
         const url = `/live/zone_timeline?dev=${encodeURIComponent(dev)}&bucket_ms=${ZONELINE_BUCKET_MS}&window_ms=${ZONELINE_WINDOW_MS}`;
         const res = await fetch(url, { cache:'no-store' });
@@ -614,52 +690,37 @@
     function renderZoneBar(canvas, payload) {
       if (!payload || !Array.isArray(payload.timeline) || payload.timeline.length === 0) return;
       const { bucket_ms, timeline } = payload;
-
       const firstT = timeline[0].t;
       const lastT  = timeline[timeline.length - 1].t + bucket_ms;
       const span   = Math.max(bucket_ms || 1, lastT - firstT);
-
       const dpr = window.devicePixelRatio || 1;
       const widthCSS  = canvas.clientWidth  || canvas.parentElement.clientWidth  || 300;
       const heightCSS = canvas.clientHeight || parseInt(getComputedStyle(document.documentElement).getPropertyValue('--zonebar-h')) || 14;
       canvas.width  = Math.max(1, Math.floor(widthCSS  * dpr));
       canvas.height = Math.max(1, Math.floor(heightCSS * dpr));
-
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      const toX = (t) => {
-        const p = (t - firstT) / span;
-        return Math.max(0, Math.min(canvas.width, p * canvas.width));
-      };
-
+      const toX = (t) => { const p = (t - firstT) / span; return Math.max(0, Math.min(canvas.width, p * canvas.width)); };
       const totalW = canvas.width;
       let prevRight = 0;
-
       for (let i = 0; i < timeline.length; i++) {
         const item = timeline[i];
         const t0 = item.t;
         const t1 = t0 + bucket_ms;
         const z  = item.zone_mode || 'Z1';
-
         const x0 = toX(t0);
         const x1 = toX(t1);
-
         const startX = Math.max(prevRight, Math.floor(x0));
         const segRight = Math.min(totalW, Math.ceil(x1));
-
         if (segRight > startX) {
           ctx.fillStyle = zoneColor(z);
           ctx.fillRect(startX, 0, segRight - startX + 1, canvas.height);
         }
-
         prevRight = segRight;
       }
-
       if (prevRight < totalW) { ctx.fillRect(totalW - 1, 0, 1, canvas.height); }
     }
 
