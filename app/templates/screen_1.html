@@ -16,8 +16,6 @@
       --font-pct:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
       --font-metric:"Montserrat-Thin",system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
 
-      --fs-pct:8em; --fs-metric:4em; --fs-nick:8em; --icon-size:56px;
-
       --topbar-h: 60px;
       --phase-color: #eab308;
 
@@ -30,6 +28,18 @@
 
       /* márgenes laterales del contenido central */
       --inner-side-gap: 6%;
+
+      /* ============================================================
+         🔧 AJUSTES MANUALES (CASO BASE 16 personas = grid 4x4)
+         Cambia estos 4 valores para dejar el tamaño base a tu gusto.
+         ============================================================ */
+      --base-nick-16:   56px;  /* nombre (arriba) */
+      --base-pct-16:    56px;  /* % grande (centro) */
+      --base-metric-16: 30px;  /* métricas (abajo) */
+      --base-icon-16:   30px;  /* iconos métricas */
+
+      /* Factor de escala dinámico (JS lo actualiza automáticamente) */
+      --text-scale: 1;
     }
 
     *{box-sizing:border-box}
@@ -97,11 +107,51 @@
     .invisible{ opacity: 0; }
 
     /* ====== layout base ====== */
-    body{ display:flex;align-items:center;justify-content:center;padding:10px; padding-top:calc(var(--topbar-h) + 10px); }
-    .wrap{width:100%;height:100%;max-width:1800px;display:flex;align-items:center;justify-content:center}
-    .grid{display:grid;width:100%;height:100%;gap:14px;align-content:center;align-items:stretch;justify-content:center;transition:all .3s ease}
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-metric);
+    }
 
-    .card{ position:relative;border-radius:16px;padding:16px; box-shadow:0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08); display:flex;align-items:center;justify-content:center; transition:opacity .6s ease, transform .3s ease, box-shadow .3s ease; container-type:size; color:#fff; --base-nick:56px; --base-pct:56px; --base-metric:30px; --base-icon:30px; --fs-nick:max(var(--base-nick),10cqmin); --fs-pct: var(--fs-nick); --fs-metric:max(var(--base-metric),7cqmin); --icon-size:max(var(--base-icon),5cqmin); }
+    .wrap {
+      flex: 1;
+      width: 100%;
+      height: calc(100vh - var(--topbar-h));
+      margin-top: var(--topbar-h);      /* ✅ desplaza bajo el header fijo */
+      display: flex;
+      align-items: stretch;
+      justify-content: stretch;
+    }
+
+    .grid {
+      display: grid;
+      width: 100%;
+      height: 100%;
+      gap: 14px;
+      align-content: stretch;
+      align-items: stretch;
+      justify-content: stretch;
+      transition: all .3s ease;
+      /* ❌ quitar: padding-top: var(--topbar-h); */
+    }
+
+    /* ============================================================
+       Card. Mantenemos container-type por si luego quieres cqmin,
+       pero los tamaños ahora vienen del factor --text-scale.
+       ============================================================ */
+    .card{
+      position:relative;border-radius:16px;padding:16px;
+      box-shadow:0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
+      display:flex;align-items:center;justify-content:center;
+      transition:opacity .6s ease, transform .3s ease, box-shadow .3s ease;
+      container-type:size; color:#fff;
+    }
     .card:active{transform:scale(.995)}
     .z1{background:var(--z1)}
     .z2{background:linear-gradient(135deg,#1e3a8a,#1f4bb5)}
@@ -114,19 +164,75 @@
     .zonebar::after { content:""; position:absolute; bottom:-var(--zonebar-sep-h); left:0; width:100%; height:var(--zonebar-sep-h); background: var(--zonebar-sep-color); border-bottom-left-radius:16px; border-bottom-right-radius:16px; z-index:4; }
     .zonebar.hidden { display:none; }
 
-    .nick{ position:absolute; top:10px; left:50%; transform:translateX(-50%); font-family:var(--font-nick); font-weight:800; letter-spacing:.02em; font-size:var(--fs-nick); text-shadow:0 1px 2px rgba(0,0,0,.25); white-space:nowrap; }
+    /* ====== Tamaños de texto/íconos guiados por --text-scale ====== */
+    .nick {
+      position:absolute; top:10px; left:50%; transform:translateX(-50%);
+      font-family:var(--font-nick); font-weight:800; letter-spacing:.02em;
+      text-shadow:0 1px 2px rgba(0,0,0,.25);
+      text-align:center;
+      white-space: nowrap;
+      max-width: 92cqw;
 
-    /* % grande */
-    .pct{ font-family:var(--font-pct); font-size:var(--fs-pct); font-weight:900; line-height:1; text-shadow:0 4px 10px rgba(0,0,0,.35); text-align:center; font-variant-numeric: tabular-nums; }
+      /* base + límite normal */
+      font-size: calc(var(--base-nick-16) * var(--text-scale));
 
-    .metric{display:flex;align-items:center;gap:8px;font-family:var(--font-metric);font-size:var(--fs-metric);font-weight:800;text-shadow:0 1px 2px rgba(0,0,0,.25)}
-    .metric .icon{display:inline-flex;width:var(--icon-size);height:var(--icon-size)}
-    .metric .icon svg{width:100%;height:100%;fill:currentColor}
-    .hr{position:absolute;bottom:10px;left:12px}
-    .kcal{position:absolute;bottom:10px;left:50%;transform:translateX(-50%)}
-    .moov{position:absolute;bottom:10px;right:12px}
+      /* 🔥 magia: si no cabe, se reduce automáticamente */
+      text-wrap: balance;
+      font-size: clamp(
+        10px,                                   /* nunca más pequeño que esto */
+        calc(var(--base-nick-16) * var(--text-scale)), /* tamaño normal */
+        20cqw                                   /* tope máximo por ancho */
+      );
+    }
 
-    .pct.summary-host{display:flex;align-items:center;justify-content:center;padding:0 var(--inner-side-gap);} 
+    .pct{
+      font-family:var(--font-pct);
+      font-weight:900; line-height:1;
+      text-shadow:0 4px 10px rgba(0,0,0,.35);
+      text-align:center; font-variant-numeric: tabular-nums;
+
+      font-size: min(
+        calc(var(--base-pct-16) * var(--text-scale)),
+        30cqw,
+        22cqh
+      );
+    }
+
+    .metric{
+      display:flex; align-items:center; gap:8px;
+      font-family:var(--font-metric); font-weight:800;
+      text-shadow:0 1px 2px rgba(0,0,0,.25);
+      white-space:nowrap;
+      line-height: 1; /* ayuda a no “empujar” verticalmente */
+      font-size: min(
+        calc(var(--base-metric-16) * var(--text-scale)),
+        8cqw,
+        8cqh
+      );
+    }
+
+    /* Icono exactamente del tamaño del texto */
+    .metric .icon{
+      display:inline-flex;
+      width: 1em;
+      height: 1em;
+    }
+    .metric .icon svg{ width:100%; height:100%; fill:currentColor; }
+
+    /* Slots inferiores: ancho fijo + ellipsis real */
+    .hr, .kcal, .moov{
+      position:absolute; bottom:10px;
+      display: block;            /* necesario para ellipsis */
+      width: 30cqw;              /* ancho fijo por slot (≈1/3 card) */
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .hr   { left:12px;  text-align:left; }
+    .kcal { left:50%; transform:translateX(-50%); text-align:center; width:34cqw; }
+    .moov { right:12px; text-align:right; }
+
+    .pct.summary-host{display:flex;align-items:center;justify-content:center;padding:0 var(--inner-side-gap);}
     .summarybar{ box-shadow: inset 0 2px 8px rgba(0,0,0,.35), 0 10px 24px rgba(0,0,0,.25); border-radius: 10px; width:100%; height:60%; }
 
     .empty{color:#9aa3b2;text-align:center;padding:24px;border:1px dashed #2c3350;border-radius:12px}
@@ -340,7 +446,6 @@
 
       while ((Date.now() - T0) < MAX_WAIT && !SESSION_ACTIVE) {
         const res = await getPersistedSummary(etag);
-        // console.debug('[summary] poll ->', res.kind, 'etag=', etag, 'hasPayload=', !!payload);
 
         if (res.kind === 'ok') {
           payload = res.data;
@@ -501,20 +606,94 @@
     const pctFrom = (hr, hrmax) => (typeof hr==='number' && typeof hrmax==='number' && hrmax>0)
       ? Math.max(0, Math.min(100, Math.floor((hr*100)/hrmax))) : null;
 
-    function layoutForCount(n){
-      if (n <= 0){ grid.style.gridTemplateColumns = ''; grid.style.gridTemplateRows = ''; grid.style.justifyContent = 'center'; return; }
-      let cols=4, rows=1;
-      if (n<=4){ cols=Math.max(1,n); rows=1; }
-      else if (n<=8){ cols=4; rows=2; }
-      else if (n<=12){ cols=4; rows=3; }
-      else { cols=4; rows=4; }
-      const vh = window.innerHeight - 30 - parseInt(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h'));
-      const heightPerCard = (vh - (rows - 1) * 14) / rows;
-      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
-      grid.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
-      grid.style.justifyContent = (n <= 4) ? 'center' : 'stretch';
-      grid.querySelectorAll('.card').forEach(c => c.style.height = `${heightPerCard}px`);
+    /* ============================================================
+       📐 Cálculo de escala de texto
+       - Toma como referencia el layout 4x4 (16 personas).
+       - Escala por la proporción del lado menor de la card.
+       ============================================================ */
+    function computeCardMinDim(cols, rows){
+      const cs = getComputedStyle(grid);
+      const rowGap = parseFloat(cs.rowGap || cs.gap) || 0;
+      const colGap = parseFloat(cs.columnGap || cs.gap) || 0;
+
+      const gridW = grid.clientWidth;
+      const gridH = grid.clientHeight;
+
+      const widthPerCard  = Math.max(0, (gridW - (cols - 1) * colGap) / cols);
+      const heightPerCard = Math.max(0, (gridH - (rows - 1) * rowGap) / rows);
+      return Math.min(widthPerCard, heightPerCard);
     }
+
+    // "Caso base" teórico 4x4 (independiente del layout actual)
+    function getBaseMinDimFor16(){
+      return computeCardMinDim(4, 4);
+    }
+
+    // Lee cols/rows aplicados en el grid (repeat(n, 1fr))
+    function getCurrentMinDim(){
+      const cols = (grid.style.gridTemplateColumns.match(/repeat\((\d+)/) || [ , 1 ])[1]*1 || 1;
+      const rows = (grid.style.gridTemplateRows.match(/repeat\((\d+)/) || [ , 1 ])[1]*1 || 1;
+      return computeCardMinDim(cols, rows);
+    }
+
+    function updateTextScale(){
+      const baseMin = getBaseMinDimFor16();   // referencia 4x4
+      const curMin  = getCurrentMinDim();     // tamaño actual
+      let scale = 1;
+      if (baseMin > 0) scale = curMin / baseMin;
+
+      // (Opcional) Limitar rango si quieres evitar extremos:
+      // scale = Math.max(0.7, Math.min(scale, 2));
+
+      document.documentElement.style.setProperty('--text-scale', String(scale));
+    }
+
+    function layoutForCount(n){
+      if (n <= 0){
+        grid.style.gridTemplateColumns = '';
+        grid.style.gridTemplateRows = '';
+        grid.style.justifyContent = 'center';
+        updateTextScale();
+        return;
+      }
+
+      let cols, rows;
+
+      if (n <= 2){
+        cols = n; rows = 1;
+      } else if (n <= 4){
+        cols = 2; rows = 2;       // 3 o 4 -> 2x2
+      } else if (n <= 6){
+        cols = 3; rows = 2;       // 5 o 6 -> 3x2
+      } else if (n <= 8){
+        cols = 4; rows = 2;
+      } else if (n === 9){
+        cols = 3; rows = 3;       // excepción 9 -> 3x3
+      } else if (n <= 12){
+        cols = 4; rows = 3;
+      } else {
+        cols = 4; rows = 4;       // 13+ -> 4x4
+      }
+
+      grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+      grid.style.gridTemplateRows    = `repeat(${rows}, 1fr)`;
+      grid.style.justifyContent      = 'stretch';
+      grid.style.alignContent        = 'stretch';
+      grid.style.alignItems          = 'stretch';
+
+      const style = getComputedStyle(grid);
+      const gap   = parseFloat(style.gap) || 0;
+      const h     = grid.clientHeight;
+      const heightPerCard = Math.max(0, (h - (rows - 1) * gap) / rows);
+
+      grid.querySelectorAll('.card').forEach(c => {
+        c.style.height = `${heightPerCard}px`;
+      });
+
+      // 🔑 Recalcular la escala de texto tras aplicar el layout
+      updateTextScale();
+    }
+
 
     function buildCard(d){
       const user=d.user||{}, apodo=user.apodo||`ID ${d.dev}`;
@@ -666,12 +845,15 @@
         else if (SESSION_ACTIVE){ refreshAllZoneBars(); }
         // refrescar reloj al volver de background
         updateClock();
+        // Recalcular escala tras posibles cambios de viewport
+        updateTextScale();
       }
     });
     window.addEventListener('resize', () => {
       layoutForCount(cards.size);
       if (SUMMARY_MODE){ redrawAllSummaryBars(); }
       else if (SESSION_ACTIVE) { refreshAllZoneBars(); }
+      updateTextScale();
     });
 
     // ====== Zona timeline helpers (ANCLADO AL INICIO) ======
