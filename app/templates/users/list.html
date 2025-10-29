@@ -16,6 +16,15 @@
     .badge-auto{background:#1f2937}
     .badge-manual{background:#3b1f1f}
     .badge-inline{margin-left:.35rem}
+
+    /* Buscador */
+    .toolbar .field{display:grid;gap:6px;min-width:220px}
+    .toolbar label{font-size:.85rem;color:var(--muted,#a5adbb)}
+    .toolbar input[type="search"]{
+      padding:.55rem .7rem;border:1px solid var(--border,#2a2a2a);
+      border-radius:10px;background:#0f0f10;color:#fff;outline:none;min-width:240px
+    }
+    .no-rows{padding:1rem;text-align:center;color:#a5adbb}
   </style>
 </head>
 <body>
@@ -23,8 +32,8 @@
     <h1>👤 Usuarios</h1>
 
     <!-- Barra de herramientas -->
-    <div class="toolbar" style="gap:18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap">
-      <div class="inline-controls">
+    <div class="toolbar" style="gap:18px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap">
+      <div class="inline-controls" style="row-gap:14px">
         <a class="btn btn-accent" href="{{ url_for('users.add') }}">➕ Añadir usuario</a>
 
         <!-- Control "Simulados: N" (auto-guardar) -->
@@ -33,10 +42,19 @@
         <span id="saved" class="saved-badge">✓ Guardado</span>
       </div>
 
-      <div class="filters" role="group" aria-label="Filtro">
-        <button type="button" class="active" data-filter="all" id="btn-all">Todos (0)</button>
-        <button type="button" data-filter="real" id="btn-real">Reales (0)</button>
-        <button type="button" data-filter="sim" id="btn-sim">Simulados (0)</button>
+      <div class="inline-controls" style="gap:12px">
+        <!-- SOLO: buscador -->
+        <div class="field">
+          <label for="userSearch">Buscar</label>
+          <input id="userSearch" type="search" placeholder="Nombre, apellido, apodo o device id…"
+                 aria-label="Buscar por nombre, apellido, apodo o device id">
+        </div>
+
+        <div class="filters" role="group" aria-label="Filtro">
+          <button type="button" class="active" data-filter="all" id="btn-all">Todos (0)</button>
+          <button type="button" data-filter="real" id="btn-real">Reales (0)</button>
+          <button type="button" data-filter="sim" id="btn-sim">Simulados (0)</button>
+        </div>
       </div>
     </div>
 
@@ -56,16 +74,16 @@
             <th>Acciones</th>
           </tr>
         </thead>
-        <tbody>
+        <tbody id="tbody">
           {% for u in users %}
           {% set edad_disp = (u.dob|age_from_dob) or u.edad %}
           {% set hrmax_disp = u.hr_max if u.hr_max else ((u.dob|tanaka_dob) or (u.edad|tanaka)) %}
           <tr class="{{ 'sim' if u.is_sim else '' }}" data-is-sim="{{ 1 if u.is_sim else 0 }}">
             <td>{{ u.id }}</td>
             <td>
-              {{ u.nombre }} {{ u.apellido }}
+              <span class="name">{{ u.nombre }}</span> <span class="lastname">{{ u.apellido }}</span>
               {% if u.apodo %}
-                <span class="muted">· {{ u.apodo }}</span>
+                <span class="muted apodo">· {{ u.apodo }}</span>
               {% endif %}
               {% if u.is_sim %}
                 <span class="badge" title="Usuario simulado">
@@ -105,53 +123,108 @@
           {% endfor %}
         </tbody>
       </table>
+      <div id="emptyMsg" class="no-rows" style="display:none">No hay resultados con los filtros actuales.</div>
     </div>
   </div>
 
   <script>
     (function(){
-      // ------- filtros + contadores ------
-      const rows = Array.from(document.querySelectorAll('tbody tr'));
+      // ------- utilidades -------
+      const normalize = s => (s||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+      const debounce = (fn,ms=200)=>{let t;return (...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}};
+
+      // ------- DOM -------
+      const rows = Array.from(document.querySelectorAll('#tbody tr'));
       const btns = Array.from(document.querySelectorAll('.filters button'));
       const btnAll  = document.getElementById('btn-all');
       const btnReal = document.getElementById('btn-real');
       const btnSim  = document.getElementById('btn-sim');
+      const userSearch = document.getElementById('userSearch');
+      const emptyMsg = document.getElementById('emptyMsg');
 
-      function counts(){
+      const inp = document.getElementById('simCount');
+      const saved = document.getElementById('saved');
+
+      // ------- estado -------
+      let mode = 'all';
+      let query = '';
+
+      function baseCounts(){
         const total = rows.length;
         const sim = rows.filter(r => r.dataset.isSim === "1").length;
         const real = total - sim;
         return { total, real, sim };
       }
-      function paintCounts(){
-        const { total, real, sim } = counts();
+
+      function paintCountsVisible(){
+        const visibles = rows.filter(tr => tr.style.display !== 'none');
+        const simV = visibles.filter(tr => tr.dataset.isSim === "1").length;
+        const totalV = visibles.length;
+        const realV = totalV - simV;
+        btnAll.textContent  = `Todos (${totalV})`;
+        btnReal.textContent = `Reales (${realV})`;
+        btnSim.textContent  = `Simulados (${simV})`;
+      }
+
+      function applyFilters(){
+        const q = normalize(query);
+        let visible = 0;
+
+        rows.forEach(tr => {
+          const isSim = tr.dataset.isSim === "1";
+          const inMode = (mode==='all') || (mode==='real' && !isSim) || (mode==='sim' && isSim);
+
+          const nameCell = tr.cells[1];
+          const name = normalize(nameCell.querySelector('.name')?.textContent);
+          const last = normalize(nameCell.querySelector('.lastname')?.textContent);
+          const apodoEl = nameCell.querySelector('.apodo');
+          const apodo = normalize(apodoEl ? apodoEl.textContent.replace('·','') : '');
+
+          const deviceIdCell = tr.cells[5]; // columna "ID" (device_id)
+          const deviceId = normalize(deviceIdCell?.textContent);
+
+          const matches = !q ||
+            name.includes(q) ||
+            last.includes(q) ||
+            `${name} ${last}`.includes(q) ||
+            apodo.includes(q) ||
+            deviceId.includes(q);
+
+          const show = inMode && matches;
+          tr.style.display = show ? '' : 'none';
+          if (show) visible++;
+        });
+
+        emptyMsg.style.display = visible === 0 ? '' : 'none';
+        paintCountsVisible();
+      }
+
+      function setFilter(next){
+        mode = next;
+        btns.forEach(b => b.classList.toggle('active', b.dataset.filter === mode));
+        applyFilters();
+      }
+
+      // Contadores iniciales (totales sin filtrar)
+      (function initCounts(){
+        const { total, real, sim } = baseCounts();
         btnAll.textContent  = `Todos (${total})`;
         btnReal.textContent = `Reales (${real})`;
         btnSim.textContent  = `Simulados (${sim})`;
-      }
-      function setFilter(mode){
-        rows.forEach(tr => {
-          const isSim = tr.dataset.isSim === "1";
-          let show = true;
-          if (mode === 'real') show = !isSim;
-          else if (mode === 'sim') show = isSim;
-          tr.style.display = show ? '' : 'none';
-        });
-        btns.forEach(b => b.classList.toggle('active', b.dataset.filter === mode));
-      }
+      })();
+
       btns.forEach(b => b.addEventListener('click', () => setFilter(b.dataset.filter)));
-      paintCounts(); setFilter('all');
+      setFilter('all');
 
-      // ------- simulados: auto-guardar sin botón ------
-      const inp = document.getElementById('simCount');
-      const saved = document.getElementById('saved');
+      // Buscador
+      userSearch.addEventListener('input', debounce(e => {
+        query = e.target.value || '';
+        applyFilters();
+      }, 200));
+
+      // ------- simulados: auto-guardar (igual que antes) -------
       let timer = null;
-
-      function showSaved(){
-        saved.classList.add('show');
-        setTimeout(() => saved.classList.remove('show'), 1000);
-      }
-
+      function showSaved(){ saved.classList.add('show'); setTimeout(()=>saved.classList.remove('show'), 1000); }
       async function applySimCount(n){
         try{
           const res = await fetch('/users/simulated', {
@@ -162,13 +235,11 @@
           const data = await res.json();
           if (!res.ok || !data.ok) throw new Error(data.error || 'error');
           showSaved();
-          // recargamos para reflejar altas/bajas
           location.reload();
         }catch(e){
           alert('No se pudo ajustar el número de simulados.');
         }
       }
-
       inp.addEventListener('input', () => {
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => applySimCount(inp.value || 0), 300);

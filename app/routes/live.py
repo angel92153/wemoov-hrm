@@ -70,9 +70,29 @@ def _is_fresh(ts_ms, now_ms, recent_ms) -> bool:
         return True
 
 def _reading_for_user(u: dict, prov, now_ms: int, recent_ms: int):
+    """Devuelve lectura para el usuario u. Prioriza device_id real; si no hay lectura fresca,
+    prueba con demo_device. Para simulados usa read_current(uid).
+    Retorna: {"bpm": int, "ts_ms": int, "src_dev": int|None}
+    """
     uid = int(u["id"])
     device_id = u.get("device_id")
+    demo_id = u.get("demo_device")
     is_user_sim = int(u.get("is_sim") or 0) == 1
+
+    def _read_by_dev(dev_id: int):
+        try:
+            r = prov.read_current_by_device(int(dev_id))
+        except Exception:
+            return None
+        if not isinstance(r, dict):
+            return None
+        bpm = int(r.get("bpm") or 0)
+        if bpm <= 0:
+            return None
+        ts_ms = _to_ms(r.get("ts"))
+        if not _is_fresh(ts_ms, now_ms, recent_ms):
+            return None
+        return {"bpm": bpm, "ts_ms": ts_ms or now_ms, "src_dev": int(dev_id)}
 
     if is_user_sim:
         try:
@@ -81,25 +101,21 @@ def _reading_for_user(u: dict, prov, now_ms: int, recent_ms: int):
             ts_ms = _to_ms(r.get("ts")) if isinstance(r, dict) else now_ms
         except Exception:
             bpm, ts_ms = 0, now_ms
-        return {"bpm": bpm, "ts_ms": ts_ms}
+        return {"bpm": bpm, "ts_ms": ts_ms, "src_dev": None}
 
-    if device_id is None or not hasattr(prov, "read_current_by_device"):
-        return None
-    try:
-        r = prov.read_current_by_device(int(device_id))
-    except Exception:
-        return None
-    if not isinstance(r, dict):
-        return None
+    # 1) intenta dispositivo real
+    if device_id is not None and hasattr(prov, "read_current_by_device"):
+        got = _read_by_dev(device_id)
+        if got:
+            return got
 
-    bpm = int(r.get("bpm") or 0)
-    if bpm <= 0:
-        return None
-    ts_ms = _to_ms(r.get("ts"))
-    if not _is_fresh(ts_ms, now_ms, recent_ms):
-        return None
+    # 2) intenta demo_device si el real no estuvo disponible
+    if demo_id is not None and hasattr(prov, "read_current_by_device"):
+        got = _read_by_dev(demo_id)
+        if got:
+            return got
 
-    return {"bpm": bpm, "ts_ms": ts_ms}
+    return None
 
 def _now_iso_utc() -> str:
     return datetime.utcnow().replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
@@ -221,13 +237,15 @@ def _build_live_snapshot(users_repo, prov, limit, recent_ms):
     now_ms = int(time.time() * 1000)
     out, assigned_devs, seen_users = [], set(), set()
 
+    # Marcar como asignados tanto device_id como demo_device
     for u in users:
-        dev = u.get("device_id")
-        if dev is not None:
-            try:
-                assigned_devs.add(int(dev))
-            except Exception:
-                pass
+        for key in ("device_id", "demo_device"):
+            dev = u.get(key)
+            if dev is not None:
+                try:
+                    assigned_devs.add(int(dev))
+                except Exception:
+                    pass
 
     for u in users:
         uid = int(u["id"])
@@ -237,7 +255,7 @@ def _build_live_snapshot(users_repo, prov, limit, recent_ms):
             or f"ID {uid}"
         ).strip()
 
-        # lectura más reciente de HR
+        # lectura más reciente de HR (real o demo)
         reading = _reading_for_user(u, prov, now_ms, recent_ms)
         if reading is None:
             continue
@@ -246,10 +264,12 @@ def _build_live_snapshot(users_repo, prov, limit, recent_ms):
         bpm = int(reading["bpm"])
         ts_iso = _now_iso_utc()
 
-        # determinar si es simulador o dispositivo real
+        # determinar dev a mostrar: si simulador, uid; si no, el dev exacto de la lectura (real o demo)
         is_sim = int(u.get("is_sim") or 0) == 1
-        device_id = u.get("device_id")
-        display_dev = uid if is_sim or not device_id else int(device_id)
+        if is_sim:
+            display_dev = uid
+        else:
+            display_dev = int(reading.get("src_dev") or (u.get("device_id") or u.get("demo_device") or 0))
 
         # integrar usando el mismo ID que el front (display_dev)
         ms = live_full_summary(

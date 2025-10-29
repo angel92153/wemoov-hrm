@@ -37,6 +37,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     from .routes.control import bp as control_bp
     from .routes.sessions import sessions_bp
     from .routes.users_summaries import bp as users_summaries_bp
+    from .routes.config import bp as config_bp
 
     app.register_blueprint(screens_bp)                          # "/"
     app.register_blueprint(users_bp,    url_prefix="/users")    # "/users/*"
@@ -45,6 +46,7 @@ def create_app(config_class: type[Config] = Config) -> Flask:
     app.register_blueprint(control_bp)                          # "/control*"
     app.register_blueprint(sessions_bp, url_prefix="/sessions") # "/sessions/*"
     app.register_blueprint(users_summaries_bp)  # expone /users/summaries y /api/*
+    app.register_blueprint(config_bp)
 
     # 4) Cabeceras de caché
     @app.after_request

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Configuración – Demo Devices</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/static/brand.css">
+  <style>
+    .grid{display:grid;gap:12px}
+    @media (min-width:860px){ .grid-2{grid-template-columns:1fr 1fr} }
+    .form-row{ display:grid; grid-template-columns:1fr auto; gap:8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>DEMO Devices</h1>
+
+    <!-- Alta manual / por desplegable -->
+    <div class="panel card-pad">
+      <form id="addForm" class="grid grid-2" autocomplete="off">
+        <div>
+          <label for="demo_id">ID (PK) <span class="muted">(obligatorio)</span></label>
+          <input id="demo_id" name="id" type="number" required placeholder="Ej. 1">
+        </div>
+        <div>
+          <label for="device_id">Device ID <span class="muted">(obligatorio)</span></label>
+          <input id="device_id"
+                 name="device_id"
+                 type="text"
+                 inputmode="numeric"
+                 pattern="\d*"
+                 list="freeDevices"
+                 required
+                 placeholder="Escribe o elige detectados…">
+          <datalist id="freeDevices"></datalist>
+        </div>
+        <div class="actions" style="grid-column:1/-1">
+          <button type="submit" class="btn btn-accent">➕ Añadir</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Listado -->
+    <div class="panel card-pad" style="margin-top:18px;">
+      <h3>Listado actual</h3>
+      <div class="table-wrap">
+        <table id="tbl">
+          <thead>
+            <tr>
+              <th style="width:120px">ID</th>
+              <th>Device ID</th>
+              <th style="width:160px">Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="3" class="muted">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- refs
+    const form = document.getElementById('addForm');
+    const inpId = document.getElementById('demo_id');
+    const inpDev = document.getElementById('device_id');
+    const dataList = document.getElementById('freeDevices');
+    const tbody = document.getElementById('tbody');
+
+    // --- helpers
+    const asInt = v => {
+      const s = (v ?? '').toString().trim();
+      if (s === '') return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    // === cargar demo devices (listado) ===
+    async function loadDemoDevices(){
+      try{
+        const r = await fetch('/api/demo_devices', {cache:'no-store'});
+        const data = await r.json();
+        const list = Array.isArray(data.devices) ? data.devices : [];
+        renderList(list);
+      }catch(e){
+        tbody.innerHTML = `<tr><td colspan="3" class="muted">Error cargando: ${e}</td></tr>`;
+      }
+    }
+
+    function renderList(list){
+      tbody.innerHTML = '';
+      if (!list.length){
+        tbody.innerHTML = `<tr><td colspan="3" class="muted">Sin dispositivos todavía.</td></tr>`;
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      for(const d of list){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${d.id}</td>
+          <td>${d.device_id}</td>
+          <td><button class="btn btn-danger" data-id="${d.id}">🗑️ Borrar</button></td>
+        `;
+        frag.appendChild(tr);
+      }
+      tbody.appendChild(frag);
+
+      tbody.querySelectorAll('button[data-id]').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          const id = btn.getAttribute('data-id');
+          if (!confirm(`¿Borrar DEMO Device #${id}?`)) return;
+          btn.disabled = true;
+          try{
+            const r = await fetch(`/api/demo_devices/${encodeURIComponent(id)}`, {method:'DELETE'});
+            const data = await r.json().catch(()=> ({}));
+            if(!r.ok || data.ok === false) throw new Error(data.error || 'Error');
+            loadDemoDevices();
+          }catch(e){
+            alert(e.message || 'Error al borrar');
+          }finally{
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    // === cargar unassigned devices al datalist (igual que en users) ===
+    const RECENT_S = 45;
+    const POLL_MS  = 5000;
+    const TIMEOUT_MS = 6000;
+    let pollTimer = null;
+
+    async function loadFreeDevices(){
+      const ctl = new AbortController();
+      const t = setTimeout(()=>ctl.abort(), TIMEOUT_MS);
+      try{
+        const url = new URL('/api/unassigned_devices', window.location.origin);
+        url.searchParams.set('recent', RECENT_S);
+        const res = await fetch(url.toString(), {cache:'no-store', signal: ctl.signal});
+        const data = await res.json();
+        const list = (data && Array.isArray(data.devices)) ? data.devices : [];
+        dataList.innerHTML = '';
+        // Solo números como value (sin textos informativos)
+        for (const d of list){
+          const devId = Number(d.dev);
+          const opt = document.createElement('option');
+          opt.value = String(devId);
+          dataList.appendChild(opt);
+        }
+      }catch{
+        dataList.innerHTML = '';
+      }finally{
+        clearTimeout(t);
+      }
+    }
+
+    function scheduleFree(){
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(()=> { if (!document.hidden) loadFreeDevices(); }, POLL_MS);
+    }
+    document.addEventListener('visibilitychange', ()=>{ if (!document.hidden) loadFreeDevices(); });
+
+    // --- normalizar input Device ID: solo dígitos
+    inpDev.addEventListener('input', ()=>{
+      const v = inpDev.value.trim();
+      if (v && !/^\d+$/.test(v)) inpDev.value = v.replace(/\D+/g, '');
+    });
+
+    // === submit ===
+    form.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const idVal  = asInt(inpId.value);
+      const devVal = asInt(inpDev.value);
+      if (idVal === null || devVal === null){
+        alert('ID y Device ID son obligatorios y numéricos.');
+        return;
+      }
+      // enviar
+      const btn = form.querySelector('button[type="submit"]');
+      btn.disabled = true;
+      try{
+        const r = await fetch('/api/demo_devices', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ id: idVal, device_id: devVal })
+        });
+        const data = await r.json().catch(()=> ({}));
+        if(!r.ok || data.ok === false) throw new Error(data.error || 'No se pudo añadir');
+        inpId.value = '';
+        inpDev.value = '';
+        loadDemoDevices();
+      }catch(e){
+        alert(e.message || 'Error al añadir');
+      }finally{
+        btn.disabled = false;
+      }
+    });
+
+    // init
+    loadDemoDevices();
+    loadFreeDevices();
+    scheduleFree();
+  </script>
+</body>
+</html>

@@ -6,42 +6,61 @@
   <title>HRM Live (multi)</title>
 
   <style>
+    /* ===========================
+       Fuentes
+       =========================== */
     @font-face { font-family:"StretchPro"; src:url("/static/fonts/StretchPro.otf") format("opentype"); font-display:swap; }
     @font-face { font-family:"Montserrat-Thin"; src:url("/static/fonts/Montserrat-Thin.ttf") format("truetype"); font-display:swap; }
 
-    :root{
-      --text:#ffffff; --bg:#000000;
-      --z1:#3a3a3a; --z2:#1e3a8a; --z3:#166534; --z4:#7c3aed; --z5:#b91c1c;
-      --font-nick:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
-      --font-pct:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
-      --font-metric:"Montserrat-Thin",system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
+:root{
+  /* 🎨 Colores base */
+  --text:#ffffff;
+  --bg:#000000;
+  --z1:#3a3a3a;
+  --z2:#1e3a8a;
+  --z3:#166534;
+  --z4:#7c3aed;
+  --z5:#b91c1c;
 
-      --topbar-h: 60px;
-      --phase-color: #eab308;
+  /* 🅰️ Tipografías */
+  --font-nick:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
+  --font-pct:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
+  --font-metric:"Montserrat-Thin",system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
 
-      /* grosor de la barra de zona */
-      --zonebar-h: 14px;
+  /* 🔝 Topbar y fase */
+  --topbar-h: 60px;
+  --phase-color: #eab308;
 
-      /* línea separadora */
-      --zonebar-sep-color: #000000;
-      --zonebar-sep-h: 2px;
+  /* 🔶 Barra de zona superior */
+  --zonebar-h: 14px;
+  --zonebar-sep-color: #000000;
+  --zonebar-sep-h: 2px;
 
-      /* márgenes laterales del contenido central */
-      --inner-side-gap: 6%;
+  /* 🧱 Márgenes interiores del contenido central */
+  --inner-side-gap: 6%;
 
-      /* ============================================================
-         🔧 AJUSTES MANUALES (CASO BASE 16 personas = grid 4x4)
-         Cambia estos 4 valores para dejar el tamaño base a tu gusto.
-         ============================================================ */
-      --base-nick-16:   56px;  /* nombre (arriba) */
-      --base-pct-16:    56px;  /* % grande (centro) */
-      --base-metric-16: 30px;  /* métricas (abajo) */
-      --base-icon-16:   30px;  /* iconos métricas */
+  /* ============================================================
+     📏 ESCALAS BASE (CASO 4×4)
+     ============================================================ */
+  --base-nick-16:   56px;  /* Nombre (arriba) */
+  --base-pct-16:    56px;  /* % grande (centro) */
+  --base-metric-16: 30px;  /* Métricas (abajo) */
+  --base-icon-16:   30px;  /* Iconos métricas */
 
-      /* Factor de escala dinámico (JS lo actualiza automáticamente) */
-      --text-scale: 1;
-    }
+  /* ============================================================
+     🧮 ESCALA GLOBAL (calculada dinámicamente por JS)
+     ============================================================ */
+  --text-scale: 1;
 
+  /* 🚀 Boost de tamaño para layouts 7–8 tarjetas */
+  --size-boost: 1;          /* valor activo (lo setea JS) */
+  --size-boost-7-8: 0.70;   /* cuánto quieres ampliar en 7 u 8 (ajústalo a gusto) */
+
+  /* Por si lo usas en otros sitios (opcional) */
+  --nick-max-width: 92cqw;
+}
+
+    /* Reset y base */
     *{box-sizing:border-box}
     html,body{
       margin:0;height:100%;width:100%;
@@ -50,7 +69,7 @@
       overflow:hidden;
     }
 
-    /* ======= TOPBAR ESTABLE (3 columnas): Izquierda | Logo | Derecha ======= */
+    /* ======= TOPBAR ESTABLE ======= */
     header.topbar{
       position:fixed; inset:0 0 auto 0; height:var(--topbar-h);
       display:grid;
@@ -61,18 +80,9 @@
       background: rgba(0,0,0,0.75); backdrop-filter: blur(6px);
       border-bottom: 1px solid rgba(255,255,255,.08);
     }
-
-    /* Capas: contenido base y overlay */
     .topbar .left, .topbar .center, .topbar .right { position:relative; z-index:1; }
+    .topbar .overlay { position:absolute; inset:0; pointer-events:none; z-index:2; }
 
-    /* Capa overlay que cubre todo el topbar sin afectar layout */
-    .topbar .overlay {
-      position:absolute; inset:0;
-      pointer-events:none; /* no interfiere con clicks */
-      z-index:2; /* por encima del contenido base */
-    }
-
-    /* Tipografía unificada */
     .clock, .phase, .timer{
       font-family:"StretchPro",ui-sans-serif,system-ui,"Segoe UI",Roboto,Arial,"Noto Sans",sans-serif;
       font-weight:900; line-height:1; letter-spacing:.02em; white-space:nowrap;
@@ -83,68 +93,24 @@
     .phase, .timer { color: var(--phase-color); }
     .clock { color:#fff; }
 
-    /* Izquierda: timer visible y estable */
     .left{ display:flex; align-items:center; gap:12px; min-width:0; height:100%; }
     .timer{ width:6ch; text-align:left; }
-
-    /* Centro: logo fijo en el eje */
     .center{ display:flex; align-items:center; justify-content:center; }
     .logo-img { display:block; height: calc(var(--topbar-h) * 0.5); max-width: 34vw; object-fit: contain; filter: drop-shadow(0 1px 2px rgba(0,0,0,.25)); }
-
-    /* Derecha: reloj */
     .right{ justify-self:end; }
 
-    /* ===== Label (phase) superpuesto centrado en la MITAD IZQUIERDA del topbar ===== */
     .phase{
-      position:absolute;
-      /* Centro geométrico de la mitad izquierda => 25% del ancho total */
-      left:25%; top:50%; transform:translate(-50%, -50%);
-      max-width:50vw; /* por seguridad, no crezca más de la mitad */
-      text-align:center; overflow:hidden; text-overflow:ellipsis;
-      pointer-events:none;
+      position:absolute; left:25%; top:50%; transform:translate(-50%, -50%);
+      max-width:50vw; text-align:center; overflow:hidden; text-overflow:ellipsis; pointer-events:none;
     }
 
     .invisible{ opacity: 0; }
 
     /* ====== layout base ====== */
-    body {
-      margin: 0;
-      padding: 0;
-      height: 100%;
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      background: var(--bg);
-      color: var(--text);
-      font-family: var(--font-metric);
-    }
+    .wrap { flex: 1; width: 100%; height: calc(100vh - var(--topbar-h)); margin-top: var(--topbar-h); display: flex; align-items: stretch; justify-content: stretch; }
+    .grid { display: grid; width: 100%; height: 100%; gap: 14px; align-content: stretch; align-items: stretch; justify-content: stretch; transition: all .3s ease; }
 
-    .wrap {
-      flex: 1;
-      width: 100%;
-      height: calc(100vh - var(--topbar-h));
-      margin-top: var(--topbar-h);      /* ✅ desplaza bajo el header fijo */
-      display: flex;
-      align-items: stretch;
-      justify-content: stretch;
-    }
-
-    .grid {
-      display: grid;
-      width: 100%;
-      height: 100%;
-      gap: 14px;
-      align-content: stretch;
-      align-items: stretch;
-      justify-content: stretch;
-      transition: all .3s ease;
-      /* ❌ quitar: padding-top: var(--topbar-h); */
-    }
-
-    /* ============================================================
-       Card. Mantenemos container-type por si luego quieres cqmin,
-       pero los tamaños ahora vienen del factor --text-scale.
-       ============================================================ */
+    /* ====== Card ====== */
     .card{
       position:relative;border-radius:16px;padding:16px;
       box-shadow:0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
@@ -164,66 +130,77 @@
     .zonebar::after { content:""; position:absolute; bottom:-var(--zonebar-sep-h); left:0; width:100%; height:var(--zonebar-sep-h); background: var(--zonebar-sep-color); border-bottom-left-radius:16px; border-bottom-right-radius:16px; z-index:4; }
     .zonebar.hidden { display:none; }
 
-    /* ====== Tamaños de texto/íconos guiados por --text-scale ====== */
-    .nick {
-      position:absolute; top:10px; left:50%; transform:translateX(-50%);
-      font-family:var(--font-nick); font-weight:800; letter-spacing:.02em;
+    /* ====== Nick (arriba) ====== */
+    .nick{
+      position:absolute;
+      /* El top real lo calcula JS para centrar entre zonebar y %; fallback: */
+      top: calc(var(--zonebar-h) + 8px);
+      left:50%;
+      transform: translateX(-50%);
+
+      font-family:var(--font-nick);
+      font-weight:800;
+      letter-spacing:.02em;
+      line-height:1.15; /* aire para descendentes */
       text-shadow:0 1px 2px rgba(0,0,0,.25);
       text-align:center;
-      white-space: nowrap;
-      max-width: 92cqw;
 
-      /* base + límite normal */
-      font-size: calc(var(--base-nick-16) * var(--text-scale));
+      /* Nunca partir en varias líneas ni por palabras */
+      white-space:nowrap;
+      overflow-wrap: normal;
+      word-break: keep-all;
+      hyphens: none;
 
-      /* 🔥 magia: si no cabe, se reduce automáticamente */
-      text-wrap: balance;
-      font-size: clamp(
-        10px,                                   /* nunca más pequeño que esto */
-        calc(var(--base-nick-16) * var(--text-scale)), /* tamaño normal */
-        20cqw                                   /* tope máximo por ancho */
+      max-width: var(--nick-max-width);
+
+      font-size:clamp(
+        10px,
+        calc(var(--base-nick-16) * var(--text-scale)),
+        20cqw
       );
+
+      /* Ellipsis horizontal, descendentes visibles */
+      overflow-x: clip;
+      overflow-y: visible;
+      text-overflow: ellipsis;
+
+      /* opcional; puedes quitar si prefieres: */
+      text-wrap: balance;
     }
 
+    /* % central */
     .pct{
       font-family:var(--font-pct);
-      font-weight:900; line-height:1;
+      font-weight:900;
+      line-height:1;
       text-shadow:0 4px 10px rgba(0,0,0,.35);
-      text-align:center; font-variant-numeric: tabular-nums;
+      text-align:center;
+      font-variant-numeric: tabular-nums;
 
-      font-size: min(
-        calc(var(--base-pct-16) * var(--text-scale)),
-        30cqw,
-        22cqh
-      );
+      /* ✅ base × escala × boost condicional (7–8) */
+      font-size: calc(var(--base-pct-16) * var(--text-scale) * var(--size-boost));
     }
 
+    /* Métricas inferior (HR/KCAL/MOOV) */
     .metric{
       display:flex; align-items:center; gap:8px;
       font-family:var(--font-metric); font-weight:800;
       text-shadow:0 1px 2px rgba(0,0,0,.25);
       white-space:nowrap;
-      line-height: 1; /* ayuda a no “empujar” verticalmente */
-      font-size: min(
-        calc(var(--base-metric-16) * var(--text-scale)),
-        8cqw,
-        8cqh
-      );
+      line-height:1;
+
+      /* ✅ base × escala × boost condicional (7–8) */
+      font-size: calc(var(--base-metric-16) * var(--text-scale) * var(--size-boost));
     }
 
-    /* Icono exactamente del tamaño del texto */
-    .metric .icon{
-      display:inline-flex;
-      width: 1em;
-      height: 1em;
-    }
+    .metric .icon{ display:inline-flex; width: 1em; height: 1em; }
     .metric .icon svg{ width:100%; height:100%; fill:currentColor; }
 
     /* Slots inferiores: ancho fijo + ellipsis real */
     .hr, .kcal, .moov{
       position:absolute; bottom:10px;
-      display: block;            /* necesario para ellipsis */
-      width: 30cqw;              /* ancho fijo por slot (≈1/3 card) */
+      display: block;
+      width: 30cqw;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -232,8 +209,20 @@
     .kcal { left:50%; transform:translateX(-50%); text-align:center; width:34cqw; }
     .moov { right:12px; text-align:right; }
 
-    .pct.summary-host{display:flex;align-items:center;justify-content:center;padding:0 var(--inner-side-gap);}
-    .summarybar{ box-shadow: inset 0 2px 8px rgba(0,0,0,.35), 0 10px 24px rgba(0,0,0,.25); border-radius: 10px; width:100%; height:60%; }
+    .pct.summary-host{display:flex;align-items:center;justify-content:center;padding:0 var(--inner-side-gap);} /* host limpio */
+
+    /* === NUEVO: gráfica de resumen a pantalla (entre nick y métricas) === */
+    .summarybar{
+      position:absolute;
+      left: var(--inner-side-gap);
+      right: var(--inner-side-gap);
+      /* top y bottom los fija JS en tiempo real */
+      display:block;
+      border-radius:0;        /* sin redondeos */
+      box-shadow:none;        /* sin bordes/sombras */
+      background:transparent; /* solo la gráfica */
+      pointer-events:none;
+    }
 
     .empty{color:#9aa3b2;text-align:center;padding:24px;border:1px dashed #2c3350;border-radius:12px}
     @media (prefers-reduced-motion: reduce){.card,.grid{transition:none}}
@@ -242,7 +231,6 @@
 <body>
 
   <header class="topbar">
-    <!-- Capa base: grid estable -->
     <div class="left">
       <div id="phaseTimer" class="timer invisible">00:00</div>
     </div>
@@ -253,7 +241,6 @@
       <div id="clock" class="clock">--:--</div>
     </div>
 
-    <!-- Capa overlay: no altera el layout -->
     <div class="overlay">
       <div id="phaseText" class="phase"></div>
     </div>
@@ -267,12 +254,12 @@
     let LIVE_RECENT_MS = 5000;
 
     // ====== Resumen post-sesión ======
-    let SUMMARY_MS = 15000;          // se sobreescribe desde /live/config
-    let SUMMARY_MODE = false;        // bloquea reconcile() y muestra tarjetas de resumen
-    let SUMMARY_TIMER = null;        // timeout para salir del modo resumen
-    let SUMMARY_LOADING = false;     // reentrada protegida
-    let LAST_SUMMARY_ETAG = null;    // versión del último resumen pintado
-    const summaryBars = new Map();   // dev -> canvas del relieve
+    let SUMMARY_MS = 15000;
+    let SUMMARY_MODE = false;
+    let SUMMARY_TIMER = null;
+    let SUMMARY_LOADING = false;
+    let LAST_SUMMARY_ETAG = null;
+    const summaryBars = new Map();
 
     (async () => {
       try {
@@ -281,19 +268,18 @@
           const cfg = await r.json();
           if (cfg && typeof cfg.fade_ms === 'number') FADE_DURATION_MS = cfg.fade_ms;
           if (cfg && typeof cfg.recent_ms === 'number') LIVE_RECENT_MS = cfg.recent_ms;
-          if (cfg && typeof cfg.summary_ms === 'number') SUMMARY_MS = cfg.summary_ms; // ⬅️ nuevo
+          if (cfg && typeof cfg.summary_ms === 'number') SUMMARY_MS = cfg.summary_ms;
         }
       } catch {}
     })();
 
-    // ====== Reloj cabecera (HH:MM, sin segundos) ======
+    // ====== Reloj cabecera ======
     const clockEl = document.getElementById('clock');
     function updateClock(){
       const n = new Date();
       const hh = String(n.getHours()).padStart(2,'0');
       const mm = String(n.getMinutes()).padStart(2,'0');
       clockEl.textContent = `${hh}:${mm}`;
-      // Programar la próxima actualización justo al inicio del siguiente minuto
       const msToNextMinute = (60 - n.getSeconds()) * 1000 - n.getMilliseconds();
       clearTimeout(updateClock._t);
       updateClock._t = setTimeout(updateClock, Math.max(0, msToNextMinute));
@@ -306,15 +292,17 @@
     let SESSION_ACTIVE = false;
     let ZONELINE_TIMER = null;
 
-    // Zona timeline params
-    const ZONELINE_BUCKET_MS  = 5000;      // 5s
-    const ZONELINE_WINDOW_MS  = 3600000;   // 1h (el backend limitará por KEEP_MS)
-    const ZONELINE_REFRESH_MS = 10000;     // 10s
+    const ZONELINE_BUCKET_MS  = 5000;    // 5s
+    const ZONELINE_WINDOW_MS  = 3600000; // 1h
+    const ZONELINE_REFRESH_MS = 10000;   // 10s
 
     function fmtMMSS(sec){ sec=Math.max(0,Math.floor(sec)); return `${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`; }
     function setPhaseColor(hex){ document.documentElement.style.setProperty('--phase-color', hex||'#eab308'); }
 
     function ensureZoneLineTimer(on){
+      for (const [, cnv] of zoneBars.entries()){
+        if (!on) { clearCanvas(cnv); cnv.classList.add('hidden'); }
+      }
       if (on && !ZONELINE_TIMER){ ZONELINE_TIMER = setInterval(refreshAllZoneBars, ZONELINE_REFRESH_MS); }
       if (!on && ZONELINE_TIMER){ clearInterval(ZONELINE_TIMER); ZONELINE_TIMER = null; }
     }
@@ -332,12 +320,17 @@
 
     function setZoneBarsVisible(on){
       for (const [, cnv] of zoneBars.entries()){
-        if (on){ cnv.classList.remove('hidden'); drawZoneBarForDev(cnv.dataset.dev); }
-        else { clearCanvas(cnv); cnv.classList.add('hidden'); }
+        if (on){
+          // No desocultamos a ciegas; dejamos que drawZoneBarForDev decida
+          drawZoneBarForDev(cnv.dataset.dev);
+        } else {
+          clearCanvas(cnv);
+          cnv.classList.add('hidden');
+        }
       }
     }
 
-    // ====== Modo Resumen (solo /live/summary/persisted con devices) ======
+    // ====== Modo Resumen (solo /persisted) ======
     function renderReliefBar(canvas, timeline, bucket_ms){
       if (!Array.isArray(timeline) || timeline.length === 0) return;
       const dpr = window.devicePixelRatio || 1;
@@ -347,7 +340,7 @@
       canvas.height = Math.max(1, Math.floor(heightCSS * dpr));
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.clearRect(0,0,canvas.width,canvas.height); // fondo limpio
       const firstT = timeline[0].t;
       const lastT  = (timeline[timeline.length - 1].t) + (bucket_ms || 1);
       const span   = Math.max(bucket_ms || 1, lastT - firstT);
@@ -366,35 +359,79 @@
       }
     }
 
+    // === NUEVO: posiciona el canvas de resumen para ocupar el hueco entre nick y métricas ===
+    function positionAndRenderSummaryBar(relief){
+      if (!relief) return;
+      const card = relief.closest('.card'); if (!card) return;
+
+      const nickEl = card.querySelector('.nick');
+      const hrEl   = card.querySelector('.hr'); // cualquiera de la línea de métricas vale
+      if (!nickEl || !hrEl) return;
+
+      const topMargin    = 8; // margen entre nick y gráfica
+      const bottomMargin = 8; // margen entre gráfica y métricas
+
+      const top = (nickEl.offsetTop + nickEl.offsetHeight + topMargin);
+      const bottom = Math.max(bottomMargin, card.clientHeight - hrEl.offsetTop + 6);
+
+      relief.style.top    = `${top}px`;
+      relief.style.bottom = `${bottom}px`;
+
+      const d = relief._summaryPayload || { timeline: [], bucket_ms: 5000 };
+      renderReliefBar(relief, d.timeline, d.bucket_ms);
+    }
+
     function buildSummaryCard(dev, apodo, metrics, timeline, bucket_ms){
-      const d = { dev, user: { apodo }, hr: null, metrics: { hr_max: null, zone: 'Z1', kcal: metrics?.kcal ?? null, points: metrics?.points ?? null } };
+      const d = {
+        dev,
+        user: { apodo },
+        hr: null,
+        metrics: { hr_max: null, zone: 'Z1', kcal: metrics?.kcal ?? null, points: metrics?.points ?? null }
+      };
+
       const card = buildCard(d);
-      const zc = zoneBars.get(dev); if (zc){ zc.classList.add('hidden'); clearCanvas(zc); }
-      const pctEl = card.querySelector('.pct'); if (pctEl){ pctEl.textContent = ''; }
-      const pctAvg = Number(metrics?.pct_avg ?? 0);
-      const hrEl = card.querySelector(`#hr-${dev}`); if (hrEl){ hrEl.textContent = `${Math.round(pctAvg)}%`; }
+
+      // Oculta la zonebar en modo resumen
+      const zc = zoneBars.get(dev);
+      if (zc){ zc.classList.add('hidden'); clearCanvas(zc); }
+
+      // Quitamos el % gigante del centro
+      const pctEl = card.querySelector('.pct');
+      if (pctEl){ pctEl.textContent = ''; }
+
+      // ✅ pinta % medio en HR (abajo izquierda)
+      const pctAvg = Number(metrics?.pct_avg ?? NaN);
+      const hrEl = card.querySelector(`#hr-${dev}`);
+      if (hrEl){
+        hrEl.textContent = Number.isFinite(pctAvg) ? `${Math.round(pctAvg)}%` : '--';
+      }
+
+      // Canvas de resumen ocupando el hueco entre nick y métricas
       const relief = document.createElement('canvas');
       relief.className = 'summarybar';
-      const pctHost = card.querySelector('.pct');
-      if (pctHost){ pctHost.textContent = ''; pctHost.classList.add('summary-host'); pctHost.appendChild(relief); }
-      else { relief.style.width = '100%'; relief.style.height = '60%'; card.appendChild(relief); }
+      card.appendChild(relief);
+
       summaryBars.set(dev, relief);
-      relief._summaryPayload = { timeline: Array.isArray(timeline) ? timeline : [], bucket_ms: bucket_ms || 5000 };
-      renderReliefBar(relief, relief._summaryPayload.timeline, relief._summaryPayload.bucket_ms);
+      relief._summaryPayload = {
+        timeline: Array.isArray(timeline) ? timeline : [],
+        bucket_ms: bucket_ms || 5000
+      };
+
+      // Posicionar y dibujar ahora
+      positionAndRenderSummaryBar(relief);
+
       return card;
     }
 
     function redrawAllSummaryBars(){
       for (const [dev, cnv] of summaryBars.entries()){
-        const data = cnv._summaryPayload;
-        if (data){ renderReliefBar(cnv, data.timeline || [], data.bucket_ms || 5000); }
+        positionAndRenderSummaryBar(cnv);
       }
     }
 
-    // ====== helpers fetch resumen (robusto, solo /live/summary/persisted) ======
     async function getPersistedSummary(etag) {
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 8000); // timeout duro 8s
+      const t = setTimeout(() => ctrl.abort(), 8000);
       try {
         const headers = {};
         if (etag) headers['If-None-Match'] = etag;
@@ -420,18 +457,23 @@
       }
     }
 
-    // ====== Modo Resumen — SOLO /persisted, con salidas garantizadas ======
+    // ====== Helper para formatear el nick / ID sin saltos ======
+    function formatNickText(apodo, dev){
+      const t = (apodo ?? '').trim();
+      if (!t) return `ID\u00A0${dev}`;                 // NBSP entre ID y número
+      if (/^ID\s+\S+$/i.test(t)) return t.replace(/\s+/, '\u00A0'); // también si viene como "ID 123"
+      return t;
+    }
+
     async function startSummaryMode(){
       if (SUMMARY_MODE || SUMMARY_LOADING) return;
       SUMMARY_MODE = true;
       SUMMARY_LOADING = true;
 
-      // reset visual/estado
       grid.innerHTML = '';
       cards.clear(); lastTs.clear(); lastBeatAt.clear();
       zoneBars.clear(); zoneBarState.clear(); summaryBars.clear();
 
-      // placeholder
       const holder = document.createElement('div');
       holder.className = 'card z1';
       holder.style.cssText = 'display:flex;align-items:center;justify-content:center;height:240px;opacity:1';
@@ -440,7 +482,7 @@
       layoutForCount(1);
 
       const T0 = Date.now();
-      const MAX_WAIT = 12000; // 12s
+      const MAX_WAIT = 12000;
       let payload = null;
       let etag = LAST_SUMMARY_ETAG || null;
 
@@ -452,9 +494,7 @@
           if (res.etag) etag = res.etag;
           break;
         }
-
         if (res.kind === 'not_modified') {
-          // Si no hay copia previa (app recién abierta), fuerza un fetch sin ETag
           if (!payload) {
             const res2 = await getPersistedSummary(null);
             if (res2.kind === 'ok') {
@@ -464,13 +504,10 @@
           }
           break;
         }
-
-        // pending -> respeta Retry-After
         const waitSec = Math.max(1, res.retryAfter || 2);
         await new Promise(r => setTimeout(r, waitSec * 1000));
       }
 
-      // si volvió a arrancar sesión, aborta limpio
       if (SESSION_ACTIVE) {
         SUMMARY_LOADING = false;
         SUMMARY_MODE = false;
@@ -478,11 +515,10 @@
         return;
       }
 
-      // ====== salidas garantizadas ======
       if (!payload) {
         holder.textContent = 'Resumen no disponible aún…';
         SUMMARY_LOADING = false;
-        setTimeout(() => { if (!SESSION_ACTIVE) startSummaryMode(); }, 3000); // reintento suave
+        setTimeout(() => { if (!SESSION_ACTIVE) startSummaryMode(); }, 3000);
         return;
       }
 
@@ -492,7 +528,6 @@
         return;
       }
 
-      // pintar resumen
       grid.innerHTML = '';
       cards.clear(); summaryBars.clear();
 
@@ -512,6 +547,13 @@
           const card = buildSummaryCard(dev, apodo, m, tl, bucket);
           grid.appendChild(card);
           cards.set(dev, { el: card, fadeStart: null });
+
+          const nickEl = card.querySelector('.nick');
+          if (nickEl) requestAnimationFrame(() => {
+            fitNick(nickEl);
+            placeNick(nickEl);
+            positionAndRenderSummaryBar(summaryBars.get(dev));
+          });
         }
       } catch (e) {
         console.error('render summary failed:', e);
@@ -525,7 +567,6 @@
       SUMMARY_LOADING = false;
       stopSummaryMode(SUMMARY_MS);
     }
-
 
     function stopSummaryMode(delayMs){
       if (SUMMARY_TIMER) clearTimeout(SUMMARY_TIMER);
@@ -577,7 +618,6 @@
         ensureZoneLineTimer(false);
         setZoneBarsVisible(false);
 
-        // Transición de activa -> inactiva: arrancar resumen
         if (wasActive && !SESSION_ACTIVE){ startSummaryMode(); }
       }catch(e){
         ensureZoneLineTimer(false);
@@ -607,9 +647,7 @@
       ? Math.max(0, Math.min(100, Math.floor((hr*100)/hrmax))) : null;
 
     /* ============================================================
-       📐 Cálculo de escala de texto
-       - Toma como referencia el layout 4x4 (16 personas).
-       - Escala por la proporción del lado menor de la card.
+       📐 Cálculo de escala de texto (referencia 4x4)
        ============================================================ */
     function computeCardMinDim(cols, rows){
       const cs = getComputedStyle(grid);
@@ -624,12 +662,8 @@
       return Math.min(widthPerCard, heightPerCard);
     }
 
-    // "Caso base" teórico 4x4 (independiente del layout actual)
-    function getBaseMinDimFor16(){
-      return computeCardMinDim(4, 4);
-    }
+    function getBaseMinDimFor16(){ return computeCardMinDim(4, 4); }
 
-    // Lee cols/rows aplicados en el grid (repeat(n, 1fr))
     function getCurrentMinDim(){
       const cols = (grid.style.gridTemplateColumns.match(/repeat\((\d+)/) || [ , 1 ])[1]*1 || 1;
       const rows = (grid.style.gridTemplateRows.match(/repeat\((\d+)/) || [ , 1 ])[1]*1 || 1;
@@ -637,15 +671,95 @@
     }
 
     function updateTextScale(){
-      const baseMin = getBaseMinDimFor16();   // referencia 4x4
-      const curMin  = getCurrentMinDim();     // tamaño actual
+      const baseMin = getBaseMinDimFor16();
+      const curMin  = getCurrentMinDim();
       let scale = 1;
       if (baseMin > 0) scale = curMin / baseMin;
-
-      // (Opcional) Limitar rango si quieres evitar extremos:
-      // scale = Math.max(0.7, Math.min(scale, 2));
-
       document.documentElement.style.setProperty('--text-scale', String(scale));
+    }
+
+    /* ============================================================
+       🔠 Ajuste de nick (ancho) + 📍 centrado vertical
+       ============================================================ */
+    function fitNick(el) {
+      if (!el) return;
+      const card = el.closest('.card');
+      if (!card) return;
+
+      // 1) ancho real permitido (max-width resuelto a px)
+      const csEl = getComputedStyle(el);
+      let maxW = parseFloat(csEl.maxWidth);
+      if (!Number.isFinite(maxW) || maxW <= 0) {
+        const csCard = getComputedStyle(card);
+        const cardContentW =
+          card.clientWidth -
+          (parseFloat(csCard.paddingLeft) || 0) -
+          (parseFloat(csCard.paddingRight) || 0);
+        maxW = Math.max(0, cardContentW * 0.92);
+      }
+
+      // 2) límites por variables CSS
+      const rootCss = getComputedStyle(document.documentElement);
+      const baseNick = parseFloat(rootCss.getPropertyValue('--base-nick-16')) || 56;
+      const scale    = parseFloat(rootCss.getPropertyValue('--text-scale')) || 1;
+      const MIN_PX = 10;
+      const MAX_PX = Math.max(MIN_PX, baseNick * scale);
+
+      // 3) medir sin que el ellipsis engañe
+      const prevOverflow = el.style.overflow;
+      const prevTextOverflow = el.style.textOverflow;
+      el.style.overflow = 'visible';
+      el.style.textOverflow = 'clip';
+
+      let lo = MIN_PX, hi = MAX_PX;
+      el.style.fontSize = hi + 'px';
+      if (el.scrollWidth > maxW) {
+        for (let i = 0; i < 16; i++) {
+          const mid = Math.floor((lo + hi) / 2);
+          el.style.fontSize = mid + 'px';
+          if (el.scrollWidth <= maxW) lo = mid; else hi = mid - 1;
+        }
+        el.style.fontSize = lo + 'px';
+      }
+
+      // 4) restaurar
+      el.style.overflow = prevOverflow || 'clip';
+      el.style.textOverflow = prevTextOverflow || 'ellipsis';
+    }
+
+    function placeNick(el) {
+      if (!el) return;
+      const card = el.closest('.card'); if (!card) return;
+      const pctEl = card.querySelector('.pct');
+
+      // desde arriba: borde inferior de la zonebar + margen base
+      const zonebarH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zonebar-h')) || 14;
+      const topMargin = 8; // px extra sobre la zonebar
+      const topY = zonebarH + topMargin;
+
+      // hasta arriba del % (si no hay .pct aún, usa ~45% de la card)
+      let bottomY;
+      if (pctEl) bottomY = pctEl.offsetTop;
+      else bottomY = Math.round(card.clientHeight * 0.45);
+
+      // altura del nick y hueco disponible
+      const nickH = el.getBoundingClientRect().height || 0;
+      const avail = Math.max(0, bottomY - topY);
+
+      // centrado si cabe, si no, pegado al inicio del hueco
+      const topPx = (nickH <= avail) ? (topY + Math.round((avail - nickH) / 2)) : topY;
+
+      el.style.top = `${topPx}px`;
+      el.style.transform = 'translateX(-50%)';
+    }
+
+    /* 🎚️ Aplica boost de tamaño solo en 7 u 8 cards */
+    function applySizeBoost(n){
+      const root = document.documentElement;
+      const css = getComputedStyle(root);
+      const boost78 = parseFloat(css.getPropertyValue('--size-boost-7-8')) || 1.25;
+      const val = (n === 7 || n === 8) ? boost78 : 1;
+      root.style.setProperty('--size-boost', String(val));
     }
 
     function layoutForCount(n){
@@ -654,26 +768,20 @@
         grid.style.gridTemplateRows = '';
         grid.style.justifyContent = 'center';
         updateTextScale();
+        grid.querySelectorAll('.nick').forEach(el => { fitNick(el); placeNick(el); });
         return;
       }
 
       let cols, rows;
+      if (n <= 2){ cols = n; rows = 1; }
+      else if (n <= 4){ cols = 2; rows = 2; }
+      else if (n <= 6){ cols = 3; rows = 2; }
+      else if (n <= 8){ cols = 4; rows = 2; }
+      else if (n === 9){ cols = 3; rows = 3; }
+      else if (n <= 12){ cols = 4; rows = 3; }
+      else { cols = 4; rows = 4; }
 
-      if (n <= 2){
-        cols = n; rows = 1;
-      } else if (n <= 4){
-        cols = 2; rows = 2;       // 3 o 4 -> 2x2
-      } else if (n <= 6){
-        cols = 3; rows = 2;       // 5 o 6 -> 3x2
-      } else if (n <= 8){
-        cols = 4; rows = 2;
-      } else if (n === 9){
-        cols = 3; rows = 3;       // excepción 9 -> 3x3
-      } else if (n <= 12){
-        cols = 4; rows = 3;
-      } else {
-        cols = 4; rows = 4;       // 13+ -> 4x4
-      }
+      applySizeBoost(n);
 
       grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
       grid.style.gridTemplateRows    = `repeat(${rows}, 1fr)`;
@@ -686,14 +794,16 @@
       const h     = grid.clientHeight;
       const heightPerCard = Math.max(0, (h - (rows - 1) * gap) / rows);
 
-      grid.querySelectorAll('.card').forEach(c => {
-        c.style.height = `${heightPerCard}px`;
-      });
+      grid.querySelectorAll('.card').forEach(c => { c.style.height = `${heightPerCard}px`; });
 
-      // 🔑 Recalcular la escala de texto tras aplicar el layout
       updateTextScale();
-    }
 
+      // Ajuste tras recalcular layout
+      grid.querySelectorAll('.nick').forEach(el => { fitNick(el); placeNick(el); });
+
+      // ✔️ Recolocar gráficas tras cambio de layout
+      redrawAllSummaryBars();
+    }
 
     function buildCard(d){
       const user=d.user||{}, apodo=user.apodo||`ID ${d.dev}`;
@@ -707,20 +817,25 @@
       card.className=`card ${zoneClass(zone)}`; card.style.opacity='1';
 
       const zc = document.createElement('canvas');
-      zc.className = 'zonebar';
+      zc.className = 'zonebar hidden';  // ⬅️ empieza oculta
       zc.dataset.dev = d.dev;
-      if (!SESSION_ACTIVE) zc.classList.add('hidden');
       card.appendChild(zc);
       zoneBars.set(d.dev, zc);
 
-      const nick = Object.assign(document.createElement('div'), { className:'nick', textContent:apodo });
-      const pctEl= Object.assign(document.createElement('div'), { className:'pct',  textContent:(pct==null?'--%':`${pct}%`) });
+      const nickEl = Object.assign(document.createElement('div'), {
+        className:'nick',
+        textContent: formatNickText(apodo, d.dev)
+      });
+      const pctEl  = Object.assign(document.createElement('div'), {
+        className:'pct',
+        textContent:(pct==null?'--%':`${pct}%`)
+      });
 
       const hrWrap=Object.assign(document.createElement('div'), { className:'metric hr' });
-      const hrEl  =Object.assign(document.createElement('span'), { id:`hr-${d.dev}`, textContent:(hr==null?'--':`${hr}`) });
+      const hrSpan=Object.assign(document.createElement('span'), { id:`hr-${d.dev}`, textContent:(hr==null?'--':`${hr}`) });
       const heart =document.createElement('span'); heart.className='icon';
       heart.innerHTML=`<svg viewBox="0 0 24 24"><path d="M12 21s-5.052-3.247-8.106-6.3C1.84 12.646 1 10.97 1 9.2 1 6.88 2.88 5 5.2 5c1.36 0 2.656.56 3.6 1.56L12 9.04l3.2-2.48C16.144 5.56 17.44 5 18.8 5 21.12 5 23 6.88 23 9.2c0 1.77-.84 3.446-2.894 5.5C17.052 17.753 12 21 12 21z"/></svg>`;
-      hrWrap.append(hrEl, heart);
+      hrWrap.append(hrSpan, heart);
 
       const kWrap =Object.assign(document.createElement('div'), { className:'metric kcal' });
       const kcalEl=Object.assign(document.createElement('span'), { id:`kcal-${d.dev}`, textContent:(kcal==null?'--':(Math.round(kcal*10)/10).toFixed(0)) });
@@ -734,9 +849,12 @@
       mlogo.innerHTML=`<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M7 16V8h2.6l2.4 4 2.4-4H17v8h-2V11.7l-2 3.3h-2L9 11.7V16H7z" fill="var(--bg)"></path></svg>`;
       mWrap.append(moovEl, mlogo);
 
-      card.append(nick, pctEl, hrWrap, kWrap, mWrap);
+      card.append(nickEl, pctEl, hrWrap, kWrap, mWrap);
 
       if (SESSION_ACTIVE) drawZoneBarForDev(d.dev);
+
+      requestAnimationFrame(() => { fitNick(nickEl); placeNick(nickEl); });
+
       return card;
     }
 
@@ -745,7 +863,12 @@
       card.className = `card ${zoneClass(zone)}`;
 
       const user=d.user||{}, apodo=user.apodo||`ID ${d.dev}`;
-      card.querySelector('.nick').textContent = apodo;
+      const nickEl = card.querySelector('.nick');
+      if (nickEl) {
+        const newTxt = formatNickText(apodo, d.dev);
+        if (nickEl.textContent !== newTxt) nickEl.textContent = newTxt;
+        requestAnimationFrame(() => { fitNick(nickEl); placeNick(nickEl); });
+      }
 
       const hr=(typeof d.hr==='number')?d.hr:null;
       const hrmax=m.hr_max??null;
@@ -762,13 +885,12 @@
     }
 
     function reconcile(list){
-      if (SUMMARY_MODE) return; // no tocar durante resumen
+      if (SUMMARY_MODE) return;
 
       const now = Date.now();
       const arr = Array.isArray(list) ? list : [];
       const presentIds = new Set(arr.map(d => d.dev));
 
-      // crear/actualizar
       arr.forEach(d => {
         let entry = cards.get(d.dev);
         if (!entry){
@@ -781,7 +903,6 @@
         }
       });
 
-      // desvanecer desaparecidos
       for (const [dev, entry] of Array.from(cards.entries())){
         if (!presentIds.has(dev)){
           if (entry.fadeStart == null){ entry.fadeStart = now; }
@@ -797,7 +918,6 @@
 
       layoutForCount(cards.size);
 
-      // guardar ts
       arr.forEach(d=>{ const ts=d.ts||'', prev=lastTs.get(d.dev); if (ts && ts!==prev) lastTs.set(d.dev, ts); });
 
       if (SESSION_ACTIVE){ arr.forEach(d => drawZoneBarForDev(d.dev)); }
@@ -841,36 +961,60 @@
       if (!document.hidden){
         if (nextTimer) clearTimeout(nextTimer);
         if (!useSSE && !es) tick();
-        if (SUMMARY_MODE){ redrawAllSummaryBars(); }
+        // ✔️ recolocar siempre las gráficas al volver
+        redrawAllSummaryBars();
+        if (SUMMARY_MODE){ /* nada extra */ }
         else if (SESSION_ACTIVE){ refreshAllZoneBars(); }
-        // refrescar reloj al volver de background
         updateClock();
-        // Recalcular escala tras posibles cambios de viewport
         updateTextScale();
+        grid.querySelectorAll('.nick').forEach(el => { fitNick(el); placeNick(el); });
       }
     });
+
     window.addEventListener('resize', () => {
       layoutForCount(cards.size);
-      if (SUMMARY_MODE){ redrawAllSummaryBars(); }
+      // ✔️ recolocar siempre las gráficas en resize
+      redrawAllSummaryBars();
+      if (SUMMARY_MODE){ /* nada extra */ }
       else if (SESSION_ACTIVE) { refreshAllZoneBars(); }
       updateTextScale();
+      grid.querySelectorAll('.nick').forEach(el => { fitNick(el); placeNick(el); });
     });
 
-    // ====== Zona timeline helpers (ANCLADO AL INICIO) ======
+    // ====== Zona timeline helpers ======
     async function drawZoneBarForDev(dev){
       const cardEntry = cards.get(dev); if (!cardEntry) return;
       const canvas = zoneBars.get(dev); if (!canvas) return;
       try{
         const url = `/live/zone_timeline?dev=${encodeURIComponent(dev)}&bucket_ms=${ZONELINE_BUCKET_MS}&window_ms=${ZONELINE_WINDOW_MS}`;
         const res = await fetch(url, { cache:'no-store' });
-        if (!res.ok) return;
+        if (!res.ok) {
+          clearCanvas(canvas);
+          canvas.classList.add('hidden');
+          return;
+        }
         const data = await res.json();
-        renderZoneBar(canvas, data);
-      }catch{}
+        const ok = renderZoneBar(canvas, data);
+        if (!ok) {
+          clearCanvas(canvas);
+          canvas.classList.add('hidden');
+        } else {
+          canvas.classList.remove('hidden');
+        }
+      }catch{
+        clearCanvas(canvas);
+        canvas.classList.add('hidden');
+      }
     }
 
     function renderZoneBar(canvas, payload) {
-      if (!payload || !Array.isArray(payload.timeline) || payload.timeline.length === 0) return;
+      if (!payload || !Array.isArray(payload.timeline) || payload.timeline.length === 0) {
+        clearCanvas(canvas);
+        canvas.classList.add('hidden');   // ⬅️ sin datos → oculta
+        return false;
+      }
+      canvas.classList.remove('hidden');  // ⬅️ con datos → muestra
+
       const { bucket_ms, timeline } = payload;
       const firstT = timeline[0].t;
       const lastT  = timeline[timeline.length - 1].t + bucket_ms;
@@ -881,7 +1025,7 @@
       canvas.width  = Math.max(1, Math.floor(widthCSS  * dpr));
       canvas.height = Math.max(1, Math.floor(heightCSS * dpr));
       const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      if (!ctx) return false;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -904,11 +1048,21 @@
         prevRight = segRight;
       }
       if (prevRight < totalW) { ctx.fillRect(totalW - 1, 0, 1, canvas.height); }
+      return true;
     }
 
     function refreshAllZoneBars(){
       if (!SESSION_ACTIVE) return;
       for (const dev of cards.keys()){ drawZoneBarForDev(dev); }
+    }
+
+    // ✅ Reajustar nicks cuando las webfonts estén listas
+    if (document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(() => {
+        grid.querySelectorAll('.nick').forEach(el => { fitNick(el); placeNick(el); });
+        // ✔️ recolocar gráficas tras cambio de métricas de texto
+        redrawAllSummaryBars();
+      });
     }
 
     // ====== Arranque ======

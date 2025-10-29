@@ -142,21 +142,28 @@ def add():
     repo = _repo()
     if request.method == "POST":
         data = request.form.to_dict()
-        repo.create(
+        demo_device = int(data["demo_device"]) if data.get("demo_device") else None
+
+        new_id = repo.create(
             nombre=data.get("nombre", ""),
             apellido=data.get("apellido", ""),
             apodo=data.get("apodo", ""),
+            email=(data.get("email") or None),
             sexo=data.get("sexo", "M"),
             dob=data.get("dob"),
             peso=float(data["peso"]) if data.get("peso") else None,
             device_id=int(data["device_id"]) if data.get("device_id") else None,
+            demo_device=None,  # primero None para no romper exclusividad
             hr_rest=int(data["hr_rest"]) if data.get("hr_rest") else None,
             hr_max=int(data["hr_max"]) if data.get("hr_max") else None,
             hr_max_auto=1 if data.get("hr_max_auto") else 0,
             is_sim=1 if data.get("is_sim") else 0,
         )
+        if demo_device is not None:
+            repo.assign_demo_device(new_id, demo_device)   # mueve SOLO ese demo
         flash("Usuario creado correctamente", "success")
         return redirect(url_for("users.index"))
+
     return render_template("users/form.html", user=None)
 
 # ============================================
@@ -172,11 +179,15 @@ def edit(user_id: int):
 
     if request.method == "POST":
         data = request.form.to_dict()
+        demo_device = int(data["demo_device"]) if data.get("demo_device") else None
+
+        # Actualiza resto de campos SIN tocar demo_device aquí
         repo.update(
             user_id,
             nombre=data.get("nombre", ""),
             apellido=data.get("apellido", ""),
             apodo=data.get("apodo", ""),
+            email=(data.get("email") or None),
             sexo=data.get("sexo", "M"),
             dob=data.get("dob"),
             peso=float(data["peso"]) if data.get("peso") else None,
@@ -186,6 +197,10 @@ def edit(user_id: int):
             hr_max_auto=1 if data.get("hr_max_auto") else 0,
             is_sim=1 if data.get("is_sim") else int(user.get("is_sim") or 0),
         )
+
+        # Mover/poner SOLO el demo seleccionado (no toca otros demos)
+        repo.assign_demo_device(user_id, demo_device)
+
         flash("Cambios guardados", "success")
         return redirect(url_for("users.index"))
 

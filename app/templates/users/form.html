@@ -6,20 +6,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="/static/brand.css">
   <style>
-    /* --- Layout del formulario (responsive) --- */
     .grid{
       display:grid;
       grid-template-columns: repeat(12, 1fr);
       gap:14px;
     }
-    /* Por defecto: 2 columnas en desktop (cada campo ocupa 6) */
     .grid > div{ grid-column: span 6; }
-
-    /* Campos largos a ancho completo si lo deseas:
-       Ejemplo: añade class="full" a un div para ocupar 12 columnas */
     .grid > .full{ grid-column: 1 / -1; }
 
-    /* Acciones siempre a ancho completo */
     .actions{
       grid-column: 1 / -1;
       display:flex;
@@ -30,12 +24,7 @@
     }
     .actions .btn{ padding:12px 16px; font-weight:800; }
 
-    /* Inputs cómodos para móvil */
-    form label{
-      display:block;
-      font-weight:700;
-      margin:0 0 6px;
-    }
+    form label{ display:block; font-weight:700; margin:0 0 6px; }
     form input, form select{
       width:100%;
       padding:12px 14px;
@@ -43,7 +32,7 @@
       border-radius:12px;
       background:#0f0f0f;
       color:var(--text);
-      font-size:16px; /* evita zoom en iOS */
+      font-size:16px;
       line-height:1.2;
       outline:none;
     }
@@ -51,26 +40,19 @@
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(139,92,246,.25);
     }
-    .form-help{ color:var(--muted); font-size: var(--fs-small); margin-top:6px; }
-    .muted-small{ color:var(--muted); font-size: var(--fs-small); }
-
-    /* Switch (auto HR máx) */
     .switch { display:flex; align-items:center; gap:10px; margin-top:6px; }
     .switch input[type="checkbox"]{ width:22px; height:22px; cursor:pointer; }
 
-    /* Quitar flechas de number */
     input[type="number"]::-webkit-outer-spin-button,
     input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     input[type="number"]{ -moz-appearance: textfield; appearance: textfield; }
 
-    /* Panel */
     .panel.card-pad{ padding:16px; }
     .wrap{ max-width: 900px; margin: 0 auto; }
 
-    /* --- Responsive --- */
     @media (max-width: 980px){
       .grid{ gap:12px; }
-      .grid > div{ grid-column: span 12; } /* 1 columna en tablet/móvil */
+      .grid > div{ grid-column: span 12; }
       .actions{ justify-content:stretch; }
       .actions .btn{ flex:1 1 auto; text-align:center; }
     }
@@ -109,6 +91,12 @@
         </div>
 
         <div>
+          <label>Email <span class="muted-small">(opcional)</span></label>
+          <input type="email" name="email" autocomplete="email"
+                 value="{{ user.email if user and user.email else '' }}">
+        </div>
+
+        <div>
           <label>Sexo</label>
           {% set s = (user.sexo if user else 'M') or 'M' %}
           <select name="sexo" required>
@@ -131,23 +119,6 @@
                  value="{{ user.peso if user and user.peso else '' }}" required>
         </div>
 
-        <div class="full">
-          <label>Device ID</label>
-          <input id="device_id"
-                 type="text"
-                 inputmode="numeric"
-                 pattern="\d*"
-                 name="device_id"
-                 list="freeDevices"
-                 value="{{ user.device_id if user and user.device_id else '' }}"
-                 placeholder="Escribe un ID o elige de la lista">
-          <datalist id="freeDevices">
-            <option value="">— Cargando… —</option>
-          </datalist>
-          <div class="form-help">Ponte la banda y elige de la lista, o escribe el ID manualmente.</div>
-          <div class="muted-small" id="freeInfo" style="margin-top:6px;"></div>
-        </div>
-
         <div>
           <label>FC Reposo</label>
           <input type="number" name="hr_rest" min="30" max="120"
@@ -168,6 +139,28 @@
                  {{ 'disabled' if auto else '' }}>
         </div>
 
+        <!-- Device ID limpio -->
+        <div class="full">
+          <label>Device ID</label>
+          <input id="device_id"
+                 type="text"
+                 inputmode="numeric"
+                 pattern="\d*"
+                 name="device_id"
+                 list="freeDevices"
+                 value="{{ user.device_id if user and user.device_id else '' }}">
+          <datalist id="freeDevices"></datalist>
+        </div>
+
+        <!-- DEMO Device (se llena desde /api/demo_devices) -->
+        <div class="full">
+          <label>DEMO Device</label>
+          <select id="demo_device" name="demo_device">
+            <option value="">— Cargando DEMO Devices… —</option>
+          </select>
+        </div>
+
+
         <div class="actions">
           <button type="submit" class="btn btn-accent">{{ 'Guardar cambios' if user else 'Crear usuario' }}</button>
           <a href="{{ url_for('users.index') }}" class="btn">Volver</a>
@@ -178,13 +171,11 @@
   </div>
 
   <script>
-    // === ID del usuario actual (o null si es nuevo) ===
     const rawSelf = document.body.getAttribute('data-self-uid');
     const rawDev  = document.body.getAttribute('data-self-device');
     const SELF_UID = rawSelf ? Number(rawSelf) : null;
     const SELF_DEVICE = rawDev ? Number(rawDev) : null;
 
-    // === FC Máx auto/manual ===
     const chkAuto = document.getElementById('hrmax_auto');
     const inpHrMx = document.getElementById('hr_max');
     chkAuto.addEventListener('change', () => {
@@ -193,23 +184,8 @@
       if (on) inpHrMx.value = '';
     });
 
-    // === Pulsómetros libres con <datalist> ===
     const inputDev  = document.getElementById('device_id');
     const dataList  = document.getElementById('freeDevices');
-    const freeInfo  = document.getElementById('freeInfo');
-
-    function fmtTime(ts){
-      try{
-        let ms = Number(ts);
-        if (!Number.isFinite(ms)) return '';
-        if (ms < 10_000_000_000) ms *= 1000; // convertir segundos → ms
-        const d = new Date(ms);
-        const hh = String(d.getHours()).padStart(2,'0');
-        const mm = String(d.getMinutes()).padStart(2,'0');
-        const ss = String(d.getSeconds()).padStart(2,'0');
-        return `${hh}:${mm}:${ss}`;
-      }catch{ return ''; }
-    }
 
     const RECENT_S   = 45;
     const POLL_MS    = 5000;
@@ -229,37 +205,14 @@
         const list = (data && Array.isArray(data.devices)) ? data.devices : [];
 
         dataList.innerHTML = '';
-        if (!list.length) {
+        list.forEach(d => {
+          const devId = Number(d.dev);
           const opt = document.createElement('option');
-          opt.value = '';
-          opt.textContent = '— No hay pulsómetros libres ahora —';
+          opt.value = String(devId);
           dataList.appendChild(opt);
-          freeInfo.textContent = 'Si ya te has puesto la banda, espera unos segundos.';
-        } else {
-          const opt0 = document.createElement('option');
-          opt0.value = '';
-          opt0.textContent = '— Elige un pulsómetro libre —';
-          dataList.appendChild(opt0);
-
-          list.forEach(d => {
-            const devId = Number(d.dev);
-            const isOwn = (SELF_DEVICE !== null && devId === SELF_DEVICE);
-
-            // Importante: el value debe ser SOLO el número (para que lo lea el input correctamente en móvil)
-            const opt = document.createElement('option');
-            opt.value = String(devId);
-            opt.textContent = isOwn ? `${devId} (ASIGNADO)` : String(devId);
-            dataList.appendChild(opt);
-          });
-          freeInfo.textContent = `Detectados ${list.length} dispositivos libres (actualizado ${fmtTime(Date.now())})`;
-        }
-      } catch (e) {
+        });
+      } catch {
         dataList.innerHTML = '';
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = '(Error cargando lista)';
-        dataList.appendChild(opt);
-        freeInfo.textContent = 'No se pudo obtener la lista de libres.';
       } finally {
         clearTimeout(t);
       }
@@ -274,15 +227,65 @@
       if (!document.hidden) loadFree();
     });
 
-    // Init
     loadFree();
     schedule();
 
-    // Forzar input numérico (solo dígitos)
     inputDev.addEventListener('input', () => {
       const v = inputDev.value.trim();
       if (v && !/^\d+$/.test(v)) inputDev.value = v.replace(/\D+/g, '');
     });
+
+    // === DEMO Devices -> poblar el <select> desde /api/demo_devices ===
+    const selDemo = document.getElementById('demo_device');
+
+    async function loadDemoDevicesSelect(){
+      try{
+        const r = await fetch('/api/demo_devices', { cache: 'no-store' });
+        const data = await r.json().catch(()=> ({}));
+        const list = Array.isArray(data.devices) ? data.devices : [];
+
+        selDemo.innerHTML = '';
+
+        if (!list.length){
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = '— No hay DEMO Devices —';
+          selDemo.appendChild(opt);
+          return;
+        }
+
+        // Opción placeholder
+        const opt0 = document.createElement('option');
+        opt0.value = '';
+        opt0.textContent = '';
+        selDemo.appendChild(opt0);
+
+        // Opciones: mostramos "ID · DeviceID", value = device_id (num)
+        // Si prefieres que el value sea el ID de la fila: usa String(it.id)
+        list.forEach(it => {
+          const opt = document.createElement('option');
+          opt.value = String(it.device_id);                   // <-- value
+          opt.textContent = `#${it.id} · ${it.device_id}`;    // <-- label
+          opt.dataset.demoId = String(it.id);                 // por si luego lo necesitas
+          selDemo.appendChild(opt);
+        });
+
+        // Si quieres preseleccionar algo, aquí podrías leer un valor previo
+        // ej. si el servidor te pasa {{ selected_demo_device or '' }}
+        // const current = '{{ selected_demo_device or "" }}';
+        // if (current) selDemo.value = String(current);
+
+      }catch(e){
+        selDemo.innerHTML = '';
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '(Error cargando DEMO Devices)';
+        selDemo.appendChild(opt);
+      }
+    }
+
+    // Llamada inicial al cargar la página del formulario
+    loadDemoDevicesSelect();
   </script>
 </body>
 </html>
