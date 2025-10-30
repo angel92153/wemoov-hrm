@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>HRM Live</title>
+
+  <!-- 1️⃣ CSS base -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/core.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/layout.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/topbar.css') }}">
+
+  <!-- 2️⃣ Preload de fuentes (opcional, mejora rendimiento) -->
+  <link rel="preload" href="{{ url_for('static', filename='fonts/StretchPro.otf') }}" as="font" type="font/otf" crossorigin>
+  <link rel="preload" href="{{ url_for('static', filename='fonts/Montserrat-Thin.ttf') }}" as="font" type="font/ttf" crossorigin>
+
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <meta name="color-scheme" content="dark">
+</head>
+<body data-view="live">
+
+  <!-- 3️⃣ Topbar modular -->
+  {% include "partials/_topbar.html" %}
+
+  <!-- 4️⃣ Layout principal -->
+  <div class="wrap">
+    <div class="grid" id="grid"></div>
+  </div>
+
+  <noscript>
+    <div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000;color:#fff;font-family:system-ui,Arial">
+      Necesitas activar JavaScript para ver esta pantalla.
+    </div>
+  </noscript>
+
+  <!-- 5️⃣ JS base -->
+  <script type="module" src="{{ url_for('static', filename='js/config.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/core/api.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/core/canvas.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/ui/shared.js') }}"></script>
+  <script type="module" src="{{ url_for('static', filename='js/ui/cards.js') }}"></script>
+
+  <!-- 6️⃣ Topbar (IIFE global) -->
+  <script src="{{ url_for('static', filename='js/ui/topbar.js') }}"></script>
+
+  <!-- 7️⃣ Controlador de vista -->
+  <script type="module" src="{{ url_for('static', filename='js/views/live.js') }}"></script>
+</body>
+</html>

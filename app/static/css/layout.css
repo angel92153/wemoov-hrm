@@ -1,0 +1,142 @@
+/* static/css/layout.css
+   Layout bajo topbar + grid de cards (LIVE/SUMMARY).
+   Usa únicamente variables de core.css
+*/
+
+/* Contenedor bajo la topbar */
+.wrap {
+  flex: 1;
+  width: 100%;
+  height: calc(100vh - var(--topbar-h));
+  margin-top: var(--topbar-h);
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+/* Grid base */
+.grid {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  gap: 14px;
+  align-content: stretch;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+/* Tarjeta base */
+.card {
+  --card-pad: 16px;
+  position: relative;
+  border-radius: 16px;
+  padding: var(--card-pad);
+  box-shadow: 0 10px 28px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  transition: opacity .45s ease, transform .28s ease;
+  overflow: hidden; /* mantiene esquinas redondeadas */
+}
+.card:active { transform: scale(.995); }
+
+/* Colores por zona */
+.z1 { background: var(--z1); }
+.z2 { background: var(--z2); }
+.z3 { background: var(--z3); }
+.z4 { background: var(--z4); }
+.z5 { background: var(--z5); }
+
+/* Barra de zona superior (LIVE) */
+.zonebar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;                  /* ✅ ocupa todo el ancho visible */
+  height: var(--zonebar-h);
+  display: block;               /* ✅ corrige el tamaño del canvas */
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  background: #000;
+  z-index: 3;
+  pointer-events: none;
+  object-fit: cover;
+}
+.zonebar.hidden { display: none; }
+
+/* Nick (parte superior) */
+.nick{
+  position:absolute;
+  top: calc(var(--zonebar-h) + 8px);
+  left:50%;
+  transform: translateX(-50%);
+  font-family: var(--font-nick);
+  font-weight:800;
+  letter-spacing:.02em;
+  line-height:1.15;
+  text-shadow:0 1px 2px rgba(0,0,0,.25);
+  text-align:center;
+  white-space:nowrap;
+  word-break: keep-all;
+  hyphens: none;
+  max-width: var(--nick-max-width);
+  /* base × escala global × escala de cabecera */
+  font-size: calc(var(--base-nick-1) * var(--text-scale) * var(--header-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+
+/* % central (LIVE) */
+.pct{
+  font-family: var(--font-pct);
+  font-weight:900;
+  line-height:1;
+  text-shadow:0 4px 10px rgba(0,0,0,.35);
+  text-align:center;
+  font-variant-numeric: tabular-nums;
+  /* base × escala global × escala de cabecera */
+  font-size: calc(var(--base-pct-1) * var(--text-scale) * var(--header-scale, 1));
+}
+
+
+/* Métricas inferiores */
+.metric{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-family: var(--font-metric);
+  font-weight:800;
+  line-height:1;
+  text-shadow:0 1px 2px rgba(0,0,0,.25);
+  white-space:nowrap;
+  /* base × escala global × escala específica de métricas */
+  font-size: calc(var(--base-metric-1) * var(--text-scale) * var(--metric-scale, 1));
+}
+.metric .icon { display: inline-flex; width: 1em; height: 1em; }
+.metric .icon svg { width: 100%; height: 100%; fill: currentColor; }
+
+.hr, .kcal, .moov {
+  position: absolute;
+  bottom: 10px;
+  display: block;
+  width: 30cqw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hr   { left: 12px; text-align: left; }
+.kcal { left: 50%; transform: translateX(-50%); text-align: center; width: 34cqw; }
+.moov { right: 12px; text-align: right; }
+
+/* Relief bar (SUMMARY) */
+.summarybar {
+  position: absolute;
+  background: transparent;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card, .grid { transition: none; }
+}

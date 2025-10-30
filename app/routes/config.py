@@ -1,9 +1,11 @@
 # app/routes/config.py
-from flask import Blueprint, render_template, request, redirect, url_for
+from flask import Blueprint, render_template, request, redirect, url_for, jsonify, current_app
 
 bp = Blueprint("config", __name__)
 
-# página de configuración principal (solo “demo devices” de momento)
+# ─────────────────────────────────────────────────────────────
+# Página de configuración principal (solo “demo devices” de momento)
+# ─────────────────────────────────────────────────────────────
 @bp.route("/config/demo-devices")
 def config_demo_devices():
     # pide la contraseña “admin” vía query o formulario simple
@@ -28,3 +30,20 @@ def login():
       </body>
     </html>
     """
+
+# ─────────────────────────────────────────────────────────────
+# Config pública (JSON) — usada por el frontend JS
+# ─────────────────────────────────────────────────────────────
+@bp.route("/live/config")
+def live_config():
+    """
+    Devuelve la configuración activa del sistema para el frontend Live.
+    Se alimenta desde app/config.py (clase Config cargada en current_app.config)
+    """
+    cfg = current_app.config
+    return jsonify({
+        "fade_ms": cfg.get("LIVE_FADE_MS"),
+        "recent_ms": cfg.get("LIVE_RECENT_MS"),
+        "summary_ms": cfg.get("SUMMARY_SHOW_MS"),
+        "bucket_ms": cfg.get("SUMMARY_BUCKET_MS"),
+    })

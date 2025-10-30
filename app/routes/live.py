@@ -446,13 +446,23 @@ def live_stream():
 # -------------------------
 # /live/config
 # -------------------------
+# -------------------------
+# /live/config
+# -------------------------
 @bp.get("/live/config")
 def live_config():
     return jsonify({
         "fade_ms": int(current_app.config.get("LIVE_FADE_MS", 60000)),
         "recent_ms": int(current_app.config.get("LIVE_RECENT_MS", 5000)),
         "summary_ms": int(current_app.config.get("SUMMARY_SHOW_MS", 15000)),
+        # 🔽 nuevos:
+        "summary_bucket_ms": int(current_app.config.get("SUMMARY_BUCKET_MS", 5000)),
+        "zoneline_bucket_ms": 5000,  # o saca de env si quieres añadirlo a Config
+        "zoneline_window_ms": int(current_app.config.get("HR_HISTORY_KEEP_MS", 3600000)),
+        "zoneline_refresh_ms": 10000,  # frecuencia de refresco del canvas
     })
+
+
 
 
 # -------------------------

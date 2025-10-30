@@ -1,0 +1,61 @@
+/* Fuentes */
+@font-face {
+  font-family: "StretchPro";
+  src: url("/static/fonts/StretchPro.otf") format("opentype");
+  font-display: swap;
+}
+@font-face {
+  font-family: "Montserrat-Thin";
+  src: url("/static/fonts/Montserrat-Thin.ttf") format("truetype");
+  font-display: swap;
+}
+
+/* Variables base (limpias y referidas a 1×1) */
+:root{
+  /* 🎨 Colores */
+  --text:#ffffff;
+  --bg:#000000;
+  --z1:#3a3a3a;
+  --z2:#1e3a8a;
+  --z3:#166534;
+  --z4:#7c3aed;
+  --z5:#b91c1c;
+
+  /* 🅰️ Tipografías */
+  --font-nick:"StretchPro";
+  --font-pct:"StretchPro";
+  --font-metric:"Montserrat-Thin";
+
+  /* 🔝 Topbar */
+  --topbar-h: 60px;
+  --phase-color: #eab308;
+
+  /* 🔶 Barra de zona superior */
+  --zonebar-h: 14px;
+
+  /* 🧱 Márgenes interiores del contenido central */
+  --inner-side-gap: 6%;
+
+  /* 📏 Tamaños base (referencia layout 1×1) */
+  --base-nick-1:   220px;  /* Nombre (arriba) */
+  --base-pct-1:    220px;  /* % grande (centro) */
+  --base-metric-1: 120px;   /* Métricas (abajo) */
+
+  /* 🧮 Escala global (la calcula JS en función del tamaño real de la card) */
+  --text-scale: 1;
+
+  /* Ancho máximo del nick relativo al contenedor */
+  --nick-max-width: 92cqw;
+}
+
+/* Reset sencillo */
+*{ box-sizing:border-box; }
+html,body{
+  margin:0; height:100%; width:100%;
+  background:var(--bg); color:var(--text);
+  font-family:var(--font-metric);
+  overflow:hidden;
+}
+
+/* Utilidades */
+.invisible{ opacity:0; }

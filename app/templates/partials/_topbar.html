@@ -1,0 +1,37 @@
+<header class="topbar">
+  <div class="left">
+    <div id="phaseTimer" class="timer invisible">00:00</div>
+  </div>
+
+  <div class="center">
+    <img src="{{ url_for('static', filename='logo_wemoov.png') }}" alt="WeMoov" class="logo-img" />
+  </div>
+
+  <div class="right">
+    <div id="clock" class="clock">--:--</div>
+  </div>
+
+  <div class="overlay">
+    <div id="phaseText" class="phase"></div>
+  </div>
+</header>
+
+<!-- 👇 panel flotante de control rápido -->
+<div id="miniControl" class="mini-control hidden">
+  <div class="mini-inner">
+    <div class="mini-top">
+      <select id="miniClassSelect">
+        <option value="">Cargando clases…</option>
+      </select>
+      <button id="miniStart" class="mini-start">Iniciar</button>
+    </div>
+
+    <div class="mini-buttons">
+      <button id="miniPrev" title="Atrás">⏮</button>
+      <button id="miniToggle" title="Pausa / Play">⏯</button>
+      <button id="miniNext" title="Adelante">⏭</button>
+    </div>
+
+    <div id="miniStatus" class="mini-status"></div>
+  </div>
+</div>
