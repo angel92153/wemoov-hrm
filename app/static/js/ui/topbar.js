@@ -211,21 +211,24 @@
     btnPrev.onclick = async (e) => {
       e.stopPropagation();
       await fetch("/control/prev", { method: "POST" });
-      togglePanel(false);
+      // mantener visible y reiniciar 10s
+      togglePanel(true);
     };
   }
   if (btnNext) {
     btnNext.onclick = async (e) => {
       e.stopPropagation();
       await fetch("/control/next", { method: "POST" });
-      togglePanel(false);
+      // mantener visible y reiniciar 10s
+      togglePanel(true);
     };
   }
   if (btnToggle) {
     btnToggle.onclick = async (e) => {
       e.stopPropagation();
       await fetch("/control/toggle_pause", { method: "POST" });
-      togglePanel(false);
+      // mantener visible y reiniciar 10s
+      togglePanel(true);
     };
   }
   if (btnStart) {
@@ -239,8 +242,9 @@
       await fetch("/control/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ class_id: val }),
+        body: JSON.stringify({ class_id: val } ),
       });
+      // este SÍ se cierra
       togglePanel(false);
     };
   }

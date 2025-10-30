@@ -11,6 +11,9 @@ import {
   placeNick,
   getZoneColors,
   requestIdle,
+  makeHeartIcon,
+  makeFlameIcon,
+  makeMoovIcon,
 } from "./shared.js";
 
 const summaryBars = new Map(); // dev -> canvas
@@ -40,11 +43,7 @@ export function buildSummaryCard(dev, apodo, metrics, timeline, bucket_ms) {
   hrSpan.id = `hr-${dev}`;
   const pctAvg = Number(metrics?.pct_avg ?? NaN);
   hrSpan.textContent = Number.isFinite(pctAvg) ? `${Math.round(pctAvg)}%` : "--";
-  const heart = document.createElement("span");
-  heart.className = "icon";
-  heart.innerHTML =
-    '<svg viewBox="0 0 24 24"><path d="M12 21s-5.052-3.247-8.106-6.3C1.84 12.646 1 10.97 1 9.2 1 6.88 2.88 5 5.2 5c1.36 0 2.656.56 3.6 1.56L12 9.04l3.2-2.48C16.144 5.56 17.44 5 18.8 5 21.12 5 23 6.88 23 9.2c0 1.77-.84 3.446-2.894 5.5C17.052 17.753 12 21 12 21z"/></svg>';
-  hrWrap.append(hrSpan, heart);
+  hrWrap.append(hrSpan, makeHeartIcon());
 
   // - centro: kcal
   const kWrap = document.createElement("div");
@@ -53,11 +52,7 @@ export function buildSummaryCard(dev, apodo, metrics, timeline, bucket_ms) {
   kcalEl.id = `kcal-${dev}`;
   const kcal = Number(metrics?.kcal ?? NaN);
   kcalEl.textContent = Number.isFinite(kcal) ? `${Math.round(kcal)}` : "--";
-  const flame = document.createElement("span");
-  flame.className = "icon";
-  flame.innerHTML =
-    '<svg viewBox="0 0 24 24"><path d="M12 2C9.243 5.026 8 7.91 8 10.5A4.5 4.5 0 0 0 12.5 15c2.4 0 4.5-2 4.5-4.5 0-2.59-1.243-5.474-4-8.5zM12 22c5.523 0 10-4.477 10-10 0-4.004-2.383-7.738-6-9.334.666 1.944 1 3.994 1 6.334a6 6 0 1 1-12 0c0-2.34.334-4.39 1-6.334C4.383 4.262 2 7.996 2 12c0 5.523 4.477 10 10 10z"/></svg>';
-  kWrap.append(kcalEl, flame);
+  kWrap.append(kcalEl, makeFlameIcon());
 
   // - derecha: puntos
   const mWrap = document.createElement("div");
@@ -66,11 +61,7 @@ export function buildSummaryCard(dev, apodo, metrics, timeline, bucket_ms) {
   ptsEl.id = `moov-${dev}`;
   const pts = Number(metrics?.points ?? NaN);
   ptsEl.textContent = Number.isFinite(pts) ? `${Math.round(pts)}` : "--";
-  const mlogo = document.createElement("span");
-  mlogo.className = "icon";
-  mlogo.innerHTML =
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><path d="M7 16V8h2.6l2.4 4 2.4-4H17v8h-2V11.7l-2 3.3h-2L9 11.7V16H7z" fill="var(--bg)"></path></svg>';
-  mWrap.append(ptsEl, mlogo);
+  mWrap.append(ptsEl, makeMoovIcon());
 
   card.append(nickEl, pctEl, hrWrap, kWrap, mWrap);
 

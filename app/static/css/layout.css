@@ -19,7 +19,7 @@
   display: grid;
   width: 100%;
   height: 100%;
-  gap: 14px;
+  gap: 6px;
   align-content: stretch;
   align-items: stretch;
   justify-content: stretch;
@@ -66,35 +66,43 @@
 .zonebar.hidden { display: none; }
 
 /* Nick (parte superior) */
-.nick{
-  position:absolute;
-  top: calc(var(--zonebar-h) + 8px);
-  left:50%;
-  transform: translateX(-50%);
+.nick {
+  position: absolute;
+  top: calc(var(--zonebar-h));
+  left: 50%;
+  transform: translate(-50%);
   font-family: var(--font-nick);
-  font-weight:800;
-  letter-spacing:.02em;
-  line-height:1.15;
-  text-shadow:0 1px 2px rgba(0,0,0,.25);
-  text-align:center;
-  white-space:nowrap;
+  font-weight: 800;
+  letter-spacing: .02em;
+  line-height: 1.15;
+  text-shadow: 0 1px 2px rgba(0,0,0,.25);
+  text-align: center;
+  white-space: nowrap;
   word-break: keep-all;
   hyphens: none;
   max-width: var(--nick-max-width);
-  /* base × escala global × escala de cabecera */
   font-size: calc(var(--base-nick-1) * var(--text-scale) * var(--header-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+/* Los nicks encogidos (más cortos visualmente) los bajamos un poco */
+.nick.nick--shrunk {
+  transform: translate(-50%, 25%);
+}
 
-/* % central (LIVE) */
-.pct{
+
+
+.pct {
+  position: absolute;
+  top: calc(50% + var(--zonebar-h));
+  left: 50%;
+  transform: translate(-50%, -50%);
   font-family: var(--font-pct);
-  font-weight:900;
-  line-height:1;
-  text-shadow:0 4px 10px rgba(0,0,0,.35);
-  text-align:center;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 4px 10px rgba(0, 0, 0, .35);
+  text-align: center;
   font-variant-numeric: tabular-nums;
   /* base × escala global × escala de cabecera */
   font-size: calc(var(--base-pct-1) * var(--text-scale) * var(--header-scale, 1));
@@ -111,12 +119,23 @@
   line-height:1;
   text-shadow:0 1px 2px rgba(0,0,0,.25);
   white-space:nowrap;
-  /* base × escala global × escala específica de métricas */
   font-size: calc(var(--base-metric-1) * var(--text-scale) * var(--metric-scale, 1));
 }
-.metric .icon { display: inline-flex; width: 1em; height: 1em; }
-.metric .icon svg { width: 100%; height: 100%; fill: currentColor; }
 
+.metric .icon {
+  display: inline-flex;
+  width: 1em;
+  height: 1em;
+}
+
+/* 👇 único cambio de verdad */
+.metric .icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+  display: inline-block;
+  transform: translateY(0.12em); /* prueba 0.08em → 0.12em */
+}
 .hr, .kcal, .moov {
   position: absolute;
   bottom: 10px;
@@ -129,6 +148,7 @@
 .hr   { left: 12px; text-align: left; }
 .kcal { left: 50%; transform: translateX(-50%); text-align: center; width: 34cqw; }
 .moov { right: 12px; text-align: right; }
+
 
 /* Relief bar (SUMMARY) */
 .summarybar {

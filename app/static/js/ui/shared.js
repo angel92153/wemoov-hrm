@@ -68,30 +68,44 @@ export function fitNick(el) {
   const card = el.closest(".card");
   if (!card) return;
 
-  const css = getRootCSS();
-  const w = card.clientWidth * 0.92;
+  // si aún no tiene ancho, no podemos medir → salimos
+  const cardW = card.clientWidth;
+  if (!cardW || cardW <= 0) {
+    // por si acaso, quitamos la marca
+    el.classList.remove("nick--shrunk");
+    return;
+  }
 
-  // bases desde core.css
+  const css = getRootCSS();
+  const w = cardW * 0.92;
+
+  // 1) tamaño base del layout (1ª transformación)
   const baseNick = parseFloat(css.getPropertyValue("--base-nick-1")) || 112;
   const textScale = parseFloat(css.getPropertyValue("--text-scale")) || 1;
   const headerScale = parseFloat(css.getPropertyValue("--header-scale")) || 1;
+  const targetPx = baseNick * textScale * headerScale;
 
-  const MIN_PX = 10;
-  // 👇 muy importante: incluimos headerScale
-  const MAX_PX = baseNick * textScale * headerScale;
-
-  // medir sin ellipsis
+  // guardar overflow previo
   const prevOverflow = el.style.overflow;
   const prevTO = el.style.textOverflow;
   el.style.overflow = "visible";
   el.style.textOverflow = "clip";
 
-  let lo = MIN_PX;
-  let hi = MAX_PX;
-  el.style.fontSize = hi + "px";
+  // 1ª pasada → tamaño ideal
+  el.style.fontSize = targetPx + "px";
 
-  if (el.scrollWidth > w) {
-    // búsqueda binaria para encontrar el mayor font-size que cabe
+  // ¿cabe con el tamaño ideal?
+  const needsSecondPass = el.scrollWidth > w;
+
+  // valor final
+  let finalPx = targetPx;
+
+  if (needsSecondPass) {
+    // 2ª pasada: solo si NO cabía
+    const MIN_PX = 10;
+    let lo = MIN_PX;
+    let hi = targetPx;
+
     for (let i = 0; i < 16; i++) {
       const mid = Math.floor((lo + hi) / 2);
       el.style.fontSize = mid + "px";
@@ -101,42 +115,37 @@ export function fitNick(el) {
         hi = mid - 1;
       }
     }
-    el.style.fontSize = lo + "px";
+    finalPx = lo;
+    el.style.fontSize = finalPx + "px";
   }
 
-  // restaurar
+  // restaurar overflow
   el.style.overflow = prevOverflow || "clip";
   el.style.textOverflow = prevTO || "ellipsis";
+
+  // marcar solo si de verdad hubo 2ª pasada (reducción apreciable)
+  const EPS = 0.5;
+  if (finalPx < targetPx - EPS) {
+    el.classList.add("nick--shrunk");
+  } else {
+    el.classList.remove("nick--shrunk");
+  }
 }
 
 export function placeNick(el) {
   if (!el) return;
   const card = el.closest(".card");
   if (!card) return;
-  const pctEl = card.querySelector(".pct");
 
-  const css = getRootCSS();
-  const zonebarH = parseFloat(css.getPropertyValue("--zonebar-h")) || 14;
-  const topY = zonebarH + 8;
-
-  const bottomY = pctEl ? pctEl.offsetTop : card.clientHeight * 0.45;
-  const nickH = el.getBoundingClientRect().height || 0;
-  const avail = Math.max(0, bottomY - topY);
-  const topPx = nickH <= avail ? topY + (avail - nickH) / 2 : topY;
-
+  // solo aseguramos el contexto;
+  // la posición vertical y el transform exacto los manda el CSS (.nick y .nick--shrunk)
   el.style.position = "absolute";
-  el.style.top = `${topPx}px`;
   el.style.left = "50%";
-  el.style.transform = "translateX(-50%)";
 }
 
 // -----------------------------------------------------------------------------
 // Escalado global de texto según tamaño de tarjeta
 // -----------------------------------------------------------------------------
-
-/**
- * Calcula la dimensión mínima por tarjeta para un grid dado.
- */
 function computeMinDimPerCard(grid, cols, rows) {
   const cs = getComputedStyle(grid);
   const gap = parseFloat(cs.gap || cs.rowGap || 0) || 0;
@@ -150,14 +159,9 @@ function computeMinDimPerCard(grid, cols, rows) {
   return Math.min(cardW, cardH);
 }
 
-/**
- * Aplica --text-scale comparando el layout actual contra 1×1
- * y ajusta casos especiales (2,7,8 → métricas; 13–16 → cabecera).
- */
 export function applyResponsiveTextScale(grid, cols, rows, count) {
   if (!grid || !cols || !rows) return;
 
-  // 1) scale base
   const baseMin = computeMinDimPerCard(grid, 1, 1);
   const curMin = computeMinDimPerCard(grid, cols, rows);
 
@@ -166,25 +170,20 @@ export function applyResponsiveTextScale(grid, cols, rows, count) {
     scale = curMin / baseMin;
   }
 
-  // límites globales
   scale = Math.max(0.35, Math.min(1, scale));
   ROOT.style.setProperty("--text-scale", String(scale));
 
-  // 2) valores por defecto
   let metricScale = 1;
   let headerScale = 1;
 
-  // --- CASO A: 2, 7 y 8 tarjetas → bajar SOLO métricas
   if (count === 2 || count === 7 || count === 8) {
     metricScale = 0.75;
   }
 
-  // --- CASO B: 13, 14, 15, 16 → bajar SOLO cabecera (nick + %)
   if (count >= 13 && count <= 24) {
     headerScale = 0.75;
   }
 
-  // 3) aplicar
   ROOT.style.setProperty("--metric-scale", String(metricScale));
   ROOT.style.setProperty("--header-scale", String(headerScale));
 }
@@ -196,7 +195,6 @@ export function layoutForCount(n, onAfterLayout) {
   const GRID = getGRID();
   if (!GRID) return null;
 
-  // sin tarjetas -> deja todo en 1x1 y escala por defecto
   if (n <= 0) {
     GRID.style.gridTemplateColumns = "";
     GRID.style.gridTemplateRows = "";
@@ -224,7 +222,6 @@ export function layoutForCount(n, onAfterLayout) {
     cols = 4;
     rows = 3;
   } else {
-    // 13–16 (o más) -> 4x4
     cols = 4;
     rows = 4;
   }
@@ -232,7 +229,6 @@ export function layoutForCount(n, onAfterLayout) {
   GRID.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
   GRID.style.gridTemplateRows = `repeat(${rows}, 1fr)`;
 
-  // altura por fila
   const css = getComputedStyle(GRID);
   const gap = parseFloat(css.gap) || 0;
   const h = GRID.clientHeight;
@@ -244,7 +240,7 @@ export function layoutForCount(n, onAfterLayout) {
   // aplicar escalado global ahora que sabemos cols/rows
   applyResponsiveTextScale(GRID, cols, rows, n);
 
-  // recolocar nicks
+  // recolocar nicks con el tamaño final de las cards
   GRID.querySelectorAll(".nick").forEach((el) => {
     fitNick(el);
     placeNick(el);
@@ -253,4 +249,45 @@ export function layoutForCount(n, onAfterLayout) {
   if (typeof onAfterLayout === "function") onAfterLayout();
 
   return { cols, rows, heightPerCard };
+}
+
+// -----------------------------------------------------------------------------
+// Iconos compartidos
+// -----------------------------------------------------------------------------
+// Todos devuelven <span class="icon">...</span> para que el CSS actual los pille.
+
+export function makeHeartIcon() {
+  const span = document.createElement("span");
+  span.className = "icon";
+  span.innerHTML = `
+    <svg viewBox="0 0 24 24">
+      <path d="M12 21s-5.052-3.247-8.106-6.3C1.84 12.646 1 10.97 1 9.2
+               1 6.88 2.88 5 5.2 5c1.36 0 2.656.56 3.6 1.56L12 9.04
+               l3.2-2.48C16.144 5.56 17.44 5 18.8 5
+               21.12 5 23 6.88 23 9.2c0 1.77-.84 3.446-2.894 5.5
+               C17.052 17.753 12 21 12 21z"></path>
+    </svg>
+  `;
+  return span;
+}
+
+export function makeFlameIcon() {
+  const span = document.createElement("span");
+  span.className = "icon";
+  span.innerHTML =
+    '<svg viewBox="0 0 24 24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14C8.5 10 12 8 12 4c0-.5-.04-.97-.1-1.4-.04-.3.23-.6.53-.5C16 3 19 6.5 19 11c0 5-3 9-7 9s-7-4-7-9c0-1.3.3-2.6.9-3.7.14-.26.5-.26.7-.02.6.7 1.9 2.2 1.9 3.7z"/></svg>';
+  return span;
+}
+
+export function makeMoovIcon() {
+  const span = document.createElement("span");
+  span.className = "icon";
+  span.innerHTML = `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="10"></circle>
+      <path d="M7 16V8h2.6l2.4 4 2.4-4H17v8h-2V11.7
+               l-2 3.3h-2L9 11.7V16H7z" fill="var(--bg)"></path>
+    </svg>
+  `;
+  return span;
 }

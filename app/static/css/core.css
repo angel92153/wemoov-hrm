@@ -4,11 +4,25 @@
   src: url("/static/fonts/StretchPro.otf") format("opentype");
   font-display: swap;
 }
+
 @font-face {
   font-family: "Montserrat-Thin";
   src: url("/static/fonts/Montserrat-Thin.ttf") format("truetype");
   font-display: swap;
 }
+
+@font-face {
+  font-family: "Montserrat-SemiBold";
+  src: url("/static/fonts/Montserrat-SemiBold.ttf") format("truetype");
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Montserrat-Bold";
+  src: url("/static/fonts/Montserrat-Bold.ttf") format("truetype");
+  font-display: swap;
+}
+
 
 /* Variables base (limpias y referidas a 1×1) */
 :root{
@@ -22,7 +36,7 @@
   --z5:#b91c1c;
 
   /* 🅰️ Tipografías */
-  --font-nick:"StretchPro";
+  --font-nick:"Montserrat-Bold";
   --font-pct:"StretchPro";
   --font-metric:"Montserrat-Thin";
 
