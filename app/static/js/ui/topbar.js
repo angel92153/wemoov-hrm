@@ -139,11 +139,11 @@
   const panel    = document.getElementById("miniControl");
   if (!timerBtn || !panel) return;
 
-  const sel      = document.getElementById("miniClassSelect");
-  const btnStart = document.getElementById("miniStart");
-  const btnPrev  = document.getElementById("miniPrev");
-  const btnNext  = document.getElementById("miniNext");
-  const btnToggle= document.getElementById("miniToggle");
+  const sel       = document.getElementById("miniClassSelect");
+  // 👇 ya no usamos miniStart
+  const btnPrev   = document.getElementById("miniPrev");
+  const btnNext   = document.getElementById("miniNext");
+  const btnToggle = document.getElementById("miniToggle");
 
   let hideTimer = null;
 
@@ -182,7 +182,7 @@
       sel.innerHTML = "";
       const opt0 = document.createElement("option");
       opt0.value = "";
-      opt0.textContent = list.length ? "— Selecciona clase —" : "— Sin clases —";
+      opt0.textContent = list.length ? "" : "";
       sel.appendChild(opt0);
 
       list.forEach((c) => {
@@ -215,6 +215,7 @@
       togglePanel(true);
     };
   }
+
   if (btnNext) {
     btnNext.onclick = async (e) => {
       e.stopPropagation();
@@ -223,31 +224,34 @@
       togglePanel(true);
     };
   }
+
+  // ⏯ ahora hace DOS cosas según haya o no selección:
+  // - si hay selección → /control/start { class_id }
+  // - si no hay → /control/toggle_pause (comportamiento original)
   if (btnToggle) {
     btnToggle.onclick = async (e) => {
       e.stopPropagation();
-      await fetch("/control/toggle_pause", { method: "POST" });
-      // mantener visible y reiniciar 10s
-      togglePanel(true);
-    };
-  }
-  if (btnStart) {
-    btnStart.onclick = async (e) => {
-      e.stopPropagation();
-      const val = sel.value;
-      if (!val) {
-        // no mostramos mensajes, solo no cerrar
-        return;
+      const val = sel ? sel.value : "";
+
+      if (val) {
+        // hay clase seleccionada → iniciar
+        await fetch("/control/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ class_id: val }),
+        });
+        // este SÍ lo podemos cerrar porque ya arrancaste una clase
+        togglePanel(false);
+      } else {
+        // no hay clase → mantenemos la pausa/play original
+        await fetch("/control/toggle_pause", { method: "POST" });
+        // mantener visible y reiniciar 10s
+        togglePanel(true);
       }
-      await fetch("/control/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ class_id: val } ),
-      });
-      // este SÍ se cierra
-      togglePanel(false);
     };
   }
+
+  // 👇 ya no hay if (btnStart) {...} porque lo hace el toggle
 
   // click fuera → cerrar
   document.addEventListener("click", (e) => {
@@ -265,3 +269,4 @@
     }
   });
 })();
+

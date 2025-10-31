@@ -53,18 +53,6 @@
   color: #000;
 }
 
-/* botón iniciar */
-.mini-start {
-  background: #8b5cf6;
-  border: none;
-  border-radius: 8px;
-  padding: 6px 10px;
-  color: #fff;
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
 /* botones de control */
 .mini-buttons {
   display: flex;
@@ -72,9 +60,9 @@
   justify-content: center;
 }
 .mini-buttons button {
-  background: #8b5cf6;
+  background: #ffffff;
   border: none;
-  color: #fff;
+  color: #000000;
   width: 66px;
   height: 66px;
   border-radius: 50%;
@@ -85,7 +73,6 @@
 .mini-buttons button:hover {
   background: rgba(255,255,255,0.15);
 }
-
 
 /* Contenedor topbar */
 header.topbar{

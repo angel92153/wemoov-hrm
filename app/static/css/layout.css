@@ -47,15 +47,17 @@
 .z3 { background: var(--z3); }
 .z4 { background: var(--z4); }
 .z5 { background: var(--z5); }
+.summary { background: var(--summary); }
+.bg { background: var(--bg); }
 
 /* Barra de zona superior (LIVE) */
 .zonebar {
   position: absolute;
   top: 0;
   left: 0;
-  width: 100%;                  /* ✅ ocupa todo el ancho visible */
+  width: 100%;                
   height: var(--zonebar-h);
-  display: block;               /* ✅ corrige el tamaño del canvas */
+  display: block;              
   border-top-left-radius: 16px;
   border-top-right-radius: 16px;
   background: #000;
@@ -91,8 +93,6 @@
   transform: translate(-50%, 25%);
 }
 
-
-
 .pct {
   position: absolute;
   top: calc(50% + var(--zonebar-h));
@@ -107,7 +107,6 @@
   /* base × escala global × escala de cabecera */
   font-size: calc(var(--base-pct-1) * var(--text-scale) * var(--header-scale, 1));
 }
-
 
 /* Métricas inferiores */
 .metric{
@@ -159,4 +158,96 @@
 
 @media (prefers-reduced-motion: reduce) {
   .card, .grid { transition: none; }
+}
+
+/* Loader de SUMMARY (logo apareciendo de izquierda a derecha) */
+.summary-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}
+
+.summary-loading__inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.summary-loading__logo {
+  position: relative;
+  width: 360px;
+  height: 360px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+/* Loader de SUMMARY (logo apareciendo de izquierda a derecha) */
+.summary-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}
+
+.summary-loading__inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.summary-loading__logo {
+  position: relative;
+  width: 360px;
+  height: 360px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.summary-loading__logo img {
+  width: 80%;
+  height: auto;
+  object-fit: contain;
+
+  /* ⏱️ 5 s totales: 4 s revelando + 1 s pausa */
+  animation: summary-reveal-ltr 5s ease-in-out infinite;
+
+  /* 🧩 máscara corregida: revela de izquierda → derecha (ahora mostrando, no ocultando) */
+  mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black 50%,
+    transparent 50%,
+    transparent 100%
+  );
+  mask-size: 200% 100%;
+  mask-position: right;
+
+  -webkit-mask-image: linear-gradient(
+    to right,
+    black 0%,
+    black 50%,
+    transparent 50%,
+    transparent 100%
+  );
+  -webkit-mask-size: 200% 100%;
+  -webkit-mask-position: right;
+}
+
+/* 🎬 Animación: barrido lateral (izquierda → derecha, apareciendo) */
+@keyframes summary-reveal-ltr {
+  0% {
+    mask-position: right;
+    -webkit-mask-position: right;
+  }
+  80% {
+    mask-position: left;
+    -webkit-mask-position: left;
+  }
+  100% {
+    mask-position: left;
+    -webkit-mask-position: left;
+  }
 }

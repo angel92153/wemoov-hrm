@@ -23,7 +23,7 @@ const summaryBars = new Map(); // dev -> canvas
 // ============================================================================
 export function buildSummaryCard(dev, apodo, metrics, timeline, bucket_ms) {
   const card = document.createElement("div");
-  card.className = "card z1"; // color neutro en resumen
+  card.className = "card summary"; 
 
   // Nick
   const nickEl = document.createElement("div");

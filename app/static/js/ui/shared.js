@@ -181,7 +181,7 @@ export function applyResponsiveTextScale(grid, cols, rows, count) {
   }
 
   if (count >= 13 && count <= 24) {
-    headerScale = 0.75;
+    headerScale = 0.85;
   }
 
   ROOT.style.setProperty("--metric-scale", String(metricScale));

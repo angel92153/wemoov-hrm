@@ -15,7 +15,6 @@ import {
   zoneClass,
   pctFrom,
   formatNickText,
-  // ❌ quitamos fitNick y placeNick — solo los usa shared.js
   requestIdle,
   makeHeartIcon,
   makeFlameIcon,
@@ -221,5 +220,12 @@ function renderZoneBar(canvas, payload) {
     prevRight = segRight;
   }
 
+  // 🔽🔽🔽 AÑADIR ESTO: línea negra inferior dentro del canvas
+  ctx.fillStyle = "#000";
+  // 1px en unidades de canvas (ajustado a dpr)
+  const lineH = 1 * dpr;
+  ctx.fillRect(0, canvas.height - lineH, canvas.width, lineH);
+
   return true;
 }
+

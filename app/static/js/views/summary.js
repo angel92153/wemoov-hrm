@@ -25,17 +25,22 @@ let currentRunId = null; // id del resumen actual (si lo manda backend)
 /* =========================
    UI: placeholder
    ========================= */
-function showHolder(text) {
+function showHolder() {
   grid.innerHTML = "";
   const holder = document.createElement("div");
-  holder.className = "card z1";
-  holder.style.cssText =
-    "display:flex;align-items:center;justify-content:center;height:240px;opacity:1;text-align:center;";
-  holder.textContent = text;
+  holder.className = "card bg";
+  holder.innerHTML = `
+    <div class="summary-loading__inner">
+      <div class="summary-loading__logo">
+        <img src="/static/O_wemoov_blanca.png" alt="WeMoov" class="logo-img" />
+      </div>
+    </div>
+  `;
   grid.appendChild(holder);
   layoutForCount(1);
   return holder;
 }
+
 
 /* =========================
    "Poke" al backend para forzar generación
@@ -92,64 +97,67 @@ function scheduleSilentRetry(sec = 4) {
    Carga con polling. Si `silent=true`, no muestra "Generando…"
    ========================= */
 async function loadSummaryWithPolling(silent = false) {
-  const holder = silent ? null : showHolder("Generando resumen…");
+  // ⏱️ Marcamos inicio del loader
+  const startAt = Date.now();
+
+  const holder = silent ? null : showHolder();
 
   if (!silent) {
     await pokeBackendToGenerate();
   }
 
-  let etag = lastETag;
-  const T0 = Date.now();
-  const MAX_WAIT = 15000; // 15s
+    // 👇 forzamos un pequeño colchón antes de empezar a mirar
+  await waitMs(3000); // 1,5 s
 
-  while (Date.now() - T0 < MAX_WAIT) {
+  let etag = lastETag;
+  const MAX_WAIT = 15000; // 15 s
+
+  while (Date.now() - startAt < MAX_WAIT) {
     try {
       const res = await fetchPersisted(etag);
 
-      // 204 → todavía no hay resumen
       if (res.kind === "pending") {
-        if (holder) holder.textContent = "Generando resumen…";
         await waitMs((res.retryAfter || 2) * 1000);
         continue;
       }
 
-      // 304 → mismo resumen anterior
       if (res.kind === "not_modified") {
-        if (holder) holder.textContent = "Esperando nuevo resumen…";
         await waitMs(2000);
         continue;
       }
 
-      // Error HTTP
       if (res.kind === "error") {
-        if (holder) holder.textContent = "Error cargando resumen.";
         scheduleSilentRetry(5);
         return;
       }
 
-      // OK real
       if (res.kind === "ok") {
         const payload = res.data;
         const runId = payload?.run_id || payload?.id || null;
 
-        // ok pero vacío → reintenta
-        if (!payload || !Array.isArray(payload.devices) || !payload.devices.length) {
-          if (holder) holder.textContent = "Resumen vacío. Esperando datos…";
+        if (
+          !payload ||
+          !Array.isArray(payload.devices) ||
+          !payload.devices.length
+        ) {
           await waitMs(2000);
           continue;
         }
 
-        // si ya hemos pintado este run → no repintar
         if (currentRunId && runId && runId === currentRunId) {
           scheduleSilentRetry(5);
           return;
         }
 
-        // pintar
+        // ⭐ Espera hasta cumplir 5 s de animación
+        const elapsed = Date.now() - startAt;
+        const MIN_SHOW = 5000; // 4 s + 1 s pausa
+        if (elapsed < MIN_SHOW) {
+          await waitMs(MIN_SHOW - elapsed);
+        }
+
         lastETag = res.etag || null;
         renderSummary(payload, runId);
-
-        // reintento suave para pillar uno más nuevo
         scheduleSilentRetry(5);
         return;
       }
@@ -160,10 +168,9 @@ async function loadSummaryWithPolling(silent = false) {
     }
   }
 
-  // Timeout → mensaje y retry
-  if (holder) holder.textContent = "Resumen no disponible aún…";
   scheduleSilentRetry(5);
 }
+
 
 function waitMs(ms) {
   return new Promise((r) => setTimeout(r, ms));
